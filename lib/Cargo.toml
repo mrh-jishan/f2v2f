@@ -1,0 +1,65 @@
+[package]
+name = "f2v2f"
+version = "0.1.0"
+edition = "2021"
+description = "File to Video to File - Encode files as artistic video frames and decode back"
+
+[lib]
+name = "f2v2f"
+path = "src/lib.rs"
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+[[bin]]
+name = "f2v2f"
+path = "src/main.rs"
+
+[dependencies]
+# Image processing
+image = "0.24"
+# Video encoding
+ffmpeg-next = "7.0"
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+# CLI argument parsing
+clap = { version = "4", features = ["derive"] }
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Progress tracking
+indicatif = "0.17"
+# Random number generation
+rand = "0.8"
+# Math and geometry
+nalgebra = "0.32"
+# Hashing
+sha2 = "0.10"
+hex = "0.4"
+# File handling
+walkdir = "2"
+tempfile = "3"
+# System utilities
+num_cpus = "1.16"
+lazy_static = "1.4"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 0
+
+[[example]]
+name = "encode_file"
+path = "examples/encode_file.rs"
+
+[[example]]
+name = "decode_video"
+path = "examples/decode_video.rs"

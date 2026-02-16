@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  # Python Flask Backend
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.compose-backend
+    container_name: f2v2f-backend
+    ports:
+      - "5000:5000"
+    environment:
+      FLASK_APP: app.py
+      FLASK_ENV: development
+      FLASK_DEBUG: "1"
+      ENCODING_WIDTH: "1920"
+      ENCODING_HEIGHT: "1080"
+      ENCODING_FPS: "30"
+    volumes:
+      - ./backend/python:/app
+      - ./lib/target/release:/app/lib:ro
+    networks:
+      - f2v2f-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Next.js Frontend
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.compose-frontend
+    container_name: f2v2f-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:5000/api
+    volumes:
+      - ./frontend/nextjs:/app
+      - /app/node_modules
+      - /app/.next
+    networks:
+      - f2v2f-network
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  f2v2f-network:
+    driver: bridge
+
+volumes:
+  backend-uploads:
+  backend-outputs:
