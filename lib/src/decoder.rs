@@ -89,7 +89,7 @@ impl Decoder {
         info!("🎬 Starting video extraction from: {}", input_path.display());
 
         // Extract metadata from sidecar file to get correct chunk size and size info
-        let (actual_chunk_size, compressed_size, original_size) = self.extract_video_metadata(input_path).await?;
+        let (actual_chunk_size, compressed_size, _original_size) = self.extract_video_metadata(input_path).await?;
         
         // Extract all frame data from video using correct chunk size
         let mut extracted_data = self.extract_frame_data(input_path, actual_chunk_size, compressed_size).await?;
