@@ -83,9 +83,10 @@ impl GeometricArtGenerator {
 
     fn compute_pattern_with_data(&self, x: f32, y: f32, data_byte: u8) -> f32 {
         let base_pattern = self.compute_pattern(x, y);
-        let data_influence = (data_byte as f32 / 255.0);
+        let data_influence = (data_byte as f32 / 255.0) * 2.0 - 1.0; // [-1, 1]
 
-        base_pattern * 0.7 + data_influence * 0.3
+        // Increase data influence for better robustness
+        base_pattern * 0.2 + data_influence * 0.8
     }
 
     fn pattern_to_color(&self, pattern: f32, base_hue: f32) -> Rgba<u8> {
@@ -117,9 +118,9 @@ impl GeometricArtGenerator {
         };
 
         let m = l - c / 2.0;
-        let r = ((r1 + m) * 255.0) as u8;
-        let g = ((g1 + m) * 255.0) as u8;
-        let b = ((b1 + m) * 255.0) as u8;
+        let r = ((r1 + m) * 255.0).round() as u8;
+        let g = ((g1 + m) * 255.0).round() as u8;
+        let b = ((b1 + m) * 255.0).round() as u8;
 
         (r, g, b)
     }
@@ -142,13 +143,12 @@ impl GeometricArtGenerator {
                 // Reverse color to pattern
                 let pattern = self.color_to_pattern(pixel, base_hue);
                 
-                // Reverse pattern to data influence
                 let base_pattern = self.compute_pattern(fx, fy);
-                // pattern = base_pattern * 0.7 + data_influence * 0.3
-                let data_influence = (pattern - base_pattern * 0.7) / 0.3;
-                let data_byte = (data_influence * 255.0).max(0.0).min(255.0) as u8;
+                // pattern = base_pattern * 0.2 + data_influence * 0.8
+                let data_influence = (pattern - base_pattern * 0.2) / 0.8;
+                let data_byte = ((data_influence + 1.0) / 2.0 * 255.0).max(0.0).min(255.0);
 
-                accumulations[pixel_idx] += data_byte as f32;
+                accumulations[pixel_idx] += data_byte;
                 counts[pixel_idx] += 1;
             }
         }

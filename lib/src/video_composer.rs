@@ -33,8 +33,10 @@ impl VideoComposer {
                 "-framerate", &fps.to_string(),
                 "-i", "pipe:0",
                 "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-pix_fmt", "yuv420p",
+                "-preset", "medium",
+                "-crf", "0",
+                "-pix_fmt", "yuv444p",
+                "-color_range", "pc",
                 "-movflags", "+faststart",
                 output_path,
             ])
@@ -103,7 +105,13 @@ impl VideoComposer {
         for (i, chunk) in file_data.chunks(chunk_size).enumerate() {
             debug!("Generating and writing frame {}/{}", i + 1, num_chunks);
 
-            let img = generator.generate_from_data(chunk)?;
+            // Pad the last chunk with zeros if it's smaller than chunk_size
+            let mut padded_chunk = chunk.to_vec();
+            if padded_chunk.len() < chunk_size {
+                padded_chunk.resize(chunk_size, 0);
+            }
+
+            let img = generator.generate_from_data(&padded_chunk)?;
             let frame_bytes = img.into_raw();
             
             stdin.write_all(&frame_bytes)
@@ -138,6 +146,7 @@ impl VideoComposer {
                 "-i", &path.to_string_lossy(),
                 "-f", "rawvideo",
                 "-pix_fmt", "rgba",
+                "-color_range", "pc",
                 "-",
             ])
             .stdout(Stdio::piped())

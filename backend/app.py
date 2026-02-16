@@ -86,6 +86,8 @@ class FileRecord:
     video_url: Optional[str] = None
     original_file: Optional[str] = None
     checksum: Optional[str] = None
+    chunk_size: Optional[int] = None
+    unencoded_size: Optional[int] = None
 
 
 # In-memory job store (use database in production)
@@ -115,7 +117,8 @@ def init_db():
             video_url TEXT,
             original_file TEXT,
             checksum TEXT,
-            chunk_size INTEGER
+            chunk_size INTEGER,
+            unencoded_size INTEGER
         )
     ''')
     
@@ -150,7 +153,8 @@ def get_all_files() -> List[FileRecord]:
             video_url=row['video_url'],
             original_file=row['original_file'],
             checksum=row['checksum'],
-            chunk_size=row['chunk_size']
+            chunk_size=row['chunk_size'],
+            unencoded_size=row['unencoded_size']
         )
         for row in rows
     ]
@@ -158,7 +162,7 @@ def get_all_files() -> List[FileRecord]:
 
 def add_file_record(filename: str, file_type: str, size: int, video_url: Optional[str] = None, 
                    original_file: Optional[str] = None, checksum: Optional[str] = None,
-                   chunk_size: Optional[int] = None):
+                   chunk_size: Optional[int] = None, unencoded_size: Optional[int] = None):
     """Add a file to the database"""
     conn = get_db()
     cursor = conn.cursor()
@@ -167,26 +171,21 @@ def add_file_record(filename: str, file_type: str, size: int, video_url: Optiona
     created_at = datetime.now().isoformat()
     
     cursor.execute('''
-        INSERT INTO files (id, name, type, size, created_at, video_url, original_file, checksum, chunk_size)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (file_id, filename, file_type, size, created_at, video_url, original_file, checksum, chunk_size))
-    conn.commit()
-    conn.close()
+        INSERT INTO files (id, name, type, size, created_at, video_url, original_file, checksum, chunk_size, unencoded_size)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (file_id, filename, file_type, size, created_at, video_url, original_file, checksum, chunk_size, unencoded_size))
     
-    logger.info(f"Added file record: {filename}")
-    return FileRecord(
+    record = FileRecord(
         id=file_id,
         name=filename,
         type=file_type,
         size=size,
         created_at=created_at,
         video_url=video_url,
-        record.size,
-        record.created_at,
-        record.video_url,
-        record.original_file,
-        record.checksum
-    ))
+        original_file=original_file,
+        checksum=checksum,
+        chunk_size=chunk_size
+    )
     conn.commit()
     conn.close()
     
@@ -306,28 +305,16 @@ def encode_file():
                 
                 # Add to file registry
                 try:
-                    output_size = output_path.stat().st_size
-                    # Store original filename for future decoding
-                    original_filename = file.filename
-                    conn = get_db()
-                    cursor = conn.cursor()
-                    record_id = str(uuid.uuid4())
-                    cursor.execute('''
-                        INSERT INTO files (id, name, type, size, created_at, video_url, original_file, checksum)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (
-                        record_id,
-                        original_filename,
-                        "encoded",
-                        output_size,
-                        datetime.now().isoformat(),
-                        f"/api/download/{output_name}",
-                        original_filename,  # Store original filename
-                        None
-                    ))
-                    conn.commit()
-                    conn.close()
-                    logger.info(f"Added file record: {original_filename}")
+                    add_file_record(
+                        filename=output_name,
+                        file_type="encoded",
+                        size=output_path.stat().st_size,
+                        video_url=f"/api/download/{output_name}",
+                        original_file=file.filename,
+                        checksum=None,
+                        chunk_size=chunk_size,
+                        unencoded_size=input_path.stat().st_size
+                    )
                 except Exception as e:
                     logger.warning(f"Could not add to registry: {e}")
                 
@@ -379,35 +366,40 @@ def decode_video():
         input_path = Path(app.config["UPLOAD_FOLDER"]) / unique_name
         file.save(input_path)
         
-        # Try to find original filename from database by looking up the video
+        # Try to find original metadata from database
         original_filename = None
+        chunk_size = 4096 # Default
+        unencoded_size = None
         try:
             conn = get_db()
             cursor = conn.cursor()
-            cursor.execute('SELECT original_file FROM files WHERE video_url = ? ORDER BY created_at DESC LIMIT 1', 
-                          (f"/api/download/{filename}",))
+            # Try to find by video_url or name
+            cursor.execute('SELECT original_file, chunk_size, unencoded_size FROM files WHERE video_url = ? OR name = ? ORDER BY created_at DESC LIMIT 1', 
+                          (f"/api/download/{filename}", filename))
             row = cursor.fetchone()
-            if row and row['original_file']:
-                original_filename = row['original_file']
+            if row:
+                if row['original_file']:
+                    original_filename = row['original_file']
+                if row['chunk_size']:
+                    chunk_size = row['chunk_size']
+                if row['unencoded_size']:
+                    unencoded_size = row['unencoded_size']
+                    logger.info(f"Retrieved chunk_size {chunk_size} and unencoded_size {unencoded_size} from database")
             conn.close()
         except Exception as e:
-            logger.warning(f"Could not look up original filename: {e}")
+            logger.warning(f"Could not look up metadata: {e}")
         
         # Determine output filename - preserve extension
         if original_filename:
-            # Use original filename
             base_name = Path(original_filename).stem
             extension = Path(original_filename).suffix
             output_name = f"{uuid.uuid4()}_{base_name}{extension}"
         else:
-            # Fallback to generic name
             output_name = f"{uuid.uuid4()}_decoded.bin"
         output_path = Path(app.config["OUTPUT_FOLDER"]) / output_name
         
-        # Ensure output directory exists
         output_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # Create job
         job_id = str(uuid.uuid4())
         job = Job(
             job_id=job_id,
@@ -418,11 +410,9 @@ def decode_video():
         )
         jobs[job_id] = job
         
-        # Start decoding in background thread
         def decode_task():
             job.status = JobStatus.RUNNING
             
-            # Progress callback for this specific job
             def progress_callback(total_bytes: int, total_frames: int, message: str):
                 logger.info(f"Job {job_id} progress: {total_bytes} bytes, {total_frames} frames - {message}")
                 if hasattr(job, 'total_size') and job.total_size > 0:
@@ -434,10 +424,15 @@ def decode_video():
                 job.total_size = input_path.stat().st_size
                 
                 logger.info(f"Starting decode for {input_path}")
-                decoder = Decoder()
+                decoder = Decoder(chunk_size=chunk_size)
                 decoder.decode(str(input_path), str(output_path), progress_callback)
                 
-                # Verify output file was created
+                # Truncate to original size if known to remove padding
+                if unencoded_size is not None and output_path.exists():
+                    logger.info(f"Truncating decoded file to {unencoded_size} bytes")
+                    with open(output_path, "ab") as f:
+                        f.truncate(unencoded_size)
+                
                 if not output_path.exists():
                     raise RuntimeError(f"Decoder did not create output file: {output_path}")
                 
@@ -447,29 +442,15 @@ def decode_video():
                 
                 # Add to file registry
                 try:
-                    output_size = output_path.stat().st_size
                     checksum = calculate_checksum(output_path)
-                    # Use the original filename if available
-                    display_name = original_filename if original_filename else output_name
-                    conn = get_db()
-                    cursor = conn.cursor()
-                    record_id = str(uuid.uuid4())
-                    cursor.execute('''
-                        INSERT INTO files (id, name, type, size, created_at, video_url, original_file, checksum)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (
-                        record_id,
-                        display_name,
-                        "original",
-                        output_size,
-                        datetime.now().isoformat(),
-                        f"/api/download/{output_name}",
-                        original_filename,
-                        checksum
-                    ))
-                    conn.commit()
-                    conn.close()
-                    logger.info(f"Added decoded file record: {display_name}")
+                    add_file_record(
+                        filename=output_name,
+                        file_type="original",
+                        size=output_path.stat().st_size,
+                        video_url=f"/api/download/{output_name}",
+                        original_file=original_filename,
+                        checksum=checksum
+                    )
                 except Exception as e:
                     logger.warning(f"Could not add to registry: {e}")
                 
