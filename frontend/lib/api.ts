@@ -10,8 +10,6 @@ export interface EncodeRequest {
   height?: number;
   fps?: number;
   chunk_size?: number;
-  use_compression?: boolean;
-  compression_level?: number;
 }
 
 export interface DecodeRequest {
@@ -25,7 +23,6 @@ export interface JobStatus {
   progress: number;
   result_url?: string;
   error?: string;
-  original_filename?: string;
 }
 
 export interface FileRecord {
@@ -37,8 +34,6 @@ export interface FileRecord {
   video_url?: string;
   original_file?: string;
   checksum?: string;
-  use_compression?: boolean;
-  compression_level?: number;
 }
 
 // Start encoding job
@@ -49,8 +44,6 @@ export async function startEncode(request: EncodeRequest): Promise<{ job_id: str
   if (request.height) formData.append('height', request.height.toString());
   if (request.fps) formData.append('fps', request.fps.toString());
   if (request.chunk_size) formData.append('chunk_size', request.chunk_size.toString());
-  if (request.use_compression !== undefined) formData.append('use_compression', request.use_compression.toString());
-  if (request.compression_level) formData.append('compression_level', request.compression_level.toString());
 
   const response = await fetch(`${API_BASE}/encode`, {
     method: 'POST',

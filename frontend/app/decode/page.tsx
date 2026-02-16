@@ -5,8 +5,6 @@ import Link from 'next/link';
 import FileUploadForm from '@/components/FileUploadForm';
 import JobStatus from '@/components/JobStatus';
 import StatusModal from '@/components/StatusModal';
-import JobQueue from '@/components/JobQueue';
-import { useWebSocket } from '@/lib/useWebSocket';
 
 interface ActiveJob {
   jobId: string;
@@ -20,25 +18,28 @@ interface Notification {
 }
 
 export default function DecodePage() {
-  const [currentJob, setCurrentJob] = useState<ActiveJob | null>(null);
+  const [activeJob, setActiveJob] = useState<ActiveJob | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notification, setNotification] = useState<Notification | null>(null);
-  const { activeJobs, removeJob } = useWebSocket();
 
   const handleJobStart = (jobId: string, fileName?: string) => {
-    setCurrentJob({ jobId, fileName });
+    setActiveJob({ jobId, fileName });
     setError(null);
   };
 
+  const handleJobProgress = (_jobId: string, _progress: number, _status: string) => {
+    // Progress tracking handled by JobStatus component
+  };
+
   const handleJobComplete = () => {
-    if (currentJob) {
+    if (activeJob) {
       setNotification({
         type: 'success',
         title: 'Decoding Complete',
-        message: `${currentJob.fileName || 'File'} has been restored successfully!`,
+        message: `${activeJob.fileName || 'File'} has been decoded successfully!`,
       });
     }
-    setCurrentJob(null);
+    setActiveJob(null);
   };
 
   const handleError = (errorMessage: string) => {
@@ -48,137 +49,112 @@ export default function DecodePage() {
       title: 'Decoding Failed',
       message: errorMessage,
     });
-    setCurrentJob(null);
+    setActiveJob(null);
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 selection:bg-secondary/30">
-      {/* Background Effects */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
-        <div className="absolute bottom-[-10%] left-[-10%] w-[40%] h-[40%] bg-secondary/5 blur-[120px] rounded-full animate-pulse-slow"></div>
-        <div className="absolute top-[-10%] right-[-10%] w-[40%] h-[40%] bg-primary/5 blur-[120px] rounded-full animate-pulse-slow animation-delay-2000"></div>
-      </div>
-
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
       {/* Header */}
-      <header className="border-b border-white/5 bg-slate-950/50 backdrop-blur-md sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2 group">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-secondary to-primary flex items-center justify-center text-white font-bold shadow-lg shadow-secondary/20 group-hover:scale-110 transition-transform">
-              f
-            </div>
-            <span className="text-xl font-bold tracking-tight bg-gradient-to-r from-white to-white/60 bg-clip-text text-transparent">
-              f2v2f
-            </span>
-          </Link>
-          <nav className="hidden md:flex items-center gap-1 bg-white/5 p-1 rounded-full border border-white/5">
-            <Link href="/encode" className="px-5 py-1.5 rounded-full text-sm font-medium transition text-white/50 hover:text-white">✨ Encode</Link>
-            <Link href="/decode" className="px-5 py-1.5 rounded-full text-sm font-semibold transition bg-white/10 text-white shadow-sm ring-1 ring-white/10">🎥 Decode</Link>
-            <Link href="/history" className="px-5 py-1.5 rounded-full text-sm font-medium transition text-white/50 hover:text-white">📁 History</Link>
-          </nav>
-          <div className="flex items-center gap-3">
-            {activeJobs.filter(j => j.status === 'running').length > 0 && (
-              <div className="hidden lg:flex items-center gap-2 px-3 py-1 bg-secondary/10 border border-secondary/20 rounded-full text-xs font-bold text-secondary animate-pulse">
-                <span className="w-1.5 h-1.5 bg-secondary rounded-full"></span>
-                FLOW ACTIVE
-              </div>
-            )}
+      <header className="bg-slate-900/50 backdrop-blur border-b border-primary/10 sticky top-0 z-50">
+        <div className="max-w-6xl mx-auto px-4 py-6">
+          <div className="flex items-center justify-between">
+            <Link href="/" className="text-3xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
+              🎬 f2v2f
+            </Link>
+            <p className="text-gray-400">File to Video to File Converter</p>
           </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-6 py-12 relative z-10">
+      <main className="max-w-6xl mx-auto px-4 py-8">
+        {/* Tab Navigation */}
+        <div className="flex gap-4 mb-8 border-b border-primary/20">
+          <Link
+            href="/encode"
+            className="px-4 py-3 font-semibold transition border-b-2 border-transparent text-gray-400 hover:text-gray-300"
+          >
+            ✨ Encode
+          </Link>
+          <Link
+            href="/decode"
+            className="px-4 py-3 font-semibold transition border-b-2 border-primary text-primary"
+          >
+            🎥 Decode
+          </Link>
+          <Link
+            href="/history"
+            className="px-4 py-3 font-semibold transition border-b-2 border-transparent text-gray-400 hover:text-gray-300"
+          >
+            📁 History
+          </Link>
+        </div>
+
         {/* Error Message */}
         {error && (
-          <div className="mb-8 bg-red-500/10 border border-red-500/20 rounded-2xl p-4 flex justify-between items-center animate-in fade-in slide-in-from-top-4">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-red-500/20 flex items-center justify-center text-red-500 font-bold">!</div>
-              <p className="text-red-400 text-sm font-medium">
-                <strong>Handled Exception:</strong> {error}
-              </p>
-            </div>
-            <button onClick={() => setError(null)} className="text-red-500/50 hover:text-red-500 transition px-2">✕</button>
+          <div className="mb-6 bg-red-900/20 border border-red-500 rounded-lg p-4 flex justify-between items-center">
+            <p className="text-red-400">
+              <strong>Error:</strong> {error}
+            </p>
+            <button
+              onClick={() => setError(null)}
+              className="text-red-400 hover:text-red-300 transition"
+            >
+              ✕
+            </button>
           </div>
         )}
 
         {/* Content Area */}
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-12">
-          <div className="lg:col-span-3">
-            <div className="space-y-12">
-              <section>
-                <h1 className="text-4xl lg:text-5xl font-extrabold tracking-tight text-white mb-4">
-                  Reverse the <span className="text-secondary">Spectrum</span>
-                </h1>
-                <p className="text-slate-400 max-w-2xl text-lg leading-relaxed">
-                  Extract original data from visual patterns. Our decoder performs bit-perfect
-                  reconstruction with multi-stage verification.
-                </p>
-              </section>
-
-              <div className="bg-white/[0.02] border border-white/5 rounded-3xl p-8 lg:p-10 shadow-2xl relative overflow-hidden group hover:border-white/10 transition-colors">
-                <div className="absolute inset-0 bg-gradient-to-br from-secondary/5 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"></div>
-
-                {currentJob ? (
-                  <div className="relative z-10 animate-in fade-in zoom-in-95 duration-500">
-                    <div className="flex items-center justify-between mb-8">
-                      <h2 className="text-2xl font-bold text-white">Reconstruction in Progress</h2>
-                      <button
-                        onClick={() => setCurrentJob(null)}
-                        className="text-xs font-bold text-slate-500 hover:text-white uppercase tracking-widest transition"
-                      >
-                        Minimize
-                      </button>
-                    </div>
-                    <JobStatus
-                      jobId={currentJob.jobId}
-                      wsData={activeJobs.find(j => j.job_id === currentJob.jobId)}
-                      onComplete={handleJobComplete}
-                      onError={handleError}
-                    />
-                  </div>
-                ) : (
-                  <div className="relative z-10">
-                    <FileUploadForm
-                      mode="decode"
-                      onJobStart={(jobId, fileName) => handleJobStart(jobId, fileName)}
-                      onError={handleError}
-                    />
-                  </div>
-                )}
-              </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="lg:col-span-2">
+            <div className="space-y-6">
+              {activeJob ? (
+                <>
+                  <h2 className="text-2xl font-bold">Decoding in Progress</h2>
+                  <JobStatus
+                    jobId={activeJob.jobId}
+                    onComplete={handleJobComplete}
+                    onError={handleError}
+                    onProgress={(progress, status) => handleJobProgress(activeJob.jobId, progress, status)}
+                  />
+                </>
+              ) : (
+                <>
+                  <h2 className="text-2xl font-bold">Restore File from Video</h2>
+                  <p className="text-gray-400 mb-6">
+                    Upload an encoded video to restore the original file. The decoding process verifies
+                    data integrity using SHA256 checksums.
+                  </p>
+                  <FileUploadForm
+                    mode="decode"
+                    onJobStart={(jobId, fileName) => handleJobStart(jobId, fileName)}
+                    onError={handleError}
+                  />
+                </>
+              )}
             </div>
           </div>
 
-          {/* Sidebar - Process Queue */}
-          <div className="space-y-8">
-            <h2 className="text-xs uppercase font-black tracking-[0.2em] text-slate-500 flex items-center justify-between">
-              Process Pipeline
-              <span className="bg-slate-800 text-slate-400 px-2 py-0.5 rounded text-[10px]">{activeJobs.length}</span>
-            </h2>
-            <JobQueue
-              jobs={activeJobs}
-              onRemove={removeJob}
-            />
-
-            {/* Quick Info */}
-            <div className="bg-gradient-to-br from-secondary/10 to-transparent p-6 rounded-2xl border border-secondary/10">
-              <h3 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
-                <span className="w-1.5 h-1.5 bg-secondary rounded-full"></span>
-                Recovery Protocol
-              </h3>
-              <ul className="space-y-3 text-xs text-slate-400">
-                <li className="flex justify-between">
-                  <span>Method:</span>
-                  <span className="text-slate-300 font-mono">Pixel-to-Bit Mapping</span>
-                </li>
-                <li className="flex justify-between">
-                  <span>Verification:</span>
-                  <span className="text-slate-300 font-mono">SHA-256 Checksum</span>
-                </li>
-                <li className="flex justify-between">
-                  <span>Parallelism:</span>
-                  <span className="text-slate-300 font-mono">SIMD Accelerated</span>
-                </li>
-              </ul>
+          {/* Sidebar */}
+          <div className="bg-slate-800/50 rounded-lg p-6 border border-primary/20 h-fit">
+            <h3 className="text-lg font-semibold mb-4">ℹ️ Quick Start</h3>
+            <div className="space-y-4 text-sm text-gray-400">
+              <div>
+                <p className="font-semibold text-white mb-1">📥 To Decode:</p>
+                <p>Upload the encoded MP4 video to restore the original file</p>
+              </div>
+              <div>
+                <p className="font-semibold text-white mb-1">🔒 File Integrity:</p>
+                <p>SHA256 checksums ensure your decoded file is byte-perfect</p>
+              </div>
+              <div className="pt-4 border-t border-slate-700">
+                <p className="text-xs font-semibold text-primary mb-2">SUPPORTED FORMATS</p>
+                <p className="text-xs">MP4 videos created by f2v2f encoder</p>
+              </div>
+              <div className="pt-4 border-t border-slate-700">
+                <p className="text-xs font-semibold text-primary mb-2">FILE SIZE LIMIT</p>
+                <p className="text-xs">Up to 5GB per video</p>
+              </div>
             </div>
           </div>
         </div>
@@ -196,13 +172,10 @@ export default function DecodePage() {
       )}
 
       {/* Footer */}
-      <footer className="max-w-7xl mx-auto px-6 py-12 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-6 opacity-50">
-        <div className="flex items-center gap-4 text-xs font-medium uppercase tracking-widest text-slate-500">
-          <span>Integrity</span>
-          <span>Latency</span>
-          <span>Throughput</span>
+      <footer className="bg-slate-900/50 border-t border-primary/10 mt-12">
+        <div className="max-w-6xl mx-auto px-4 py-6 text-center text-gray-500 text-sm">
+          <p>f2v2f © 2026 • Novel File Encoding System</p>
         </div>
-        <p className="text-sm text-slate-500 font-medium">f2v2f © 2026 • Bit-Perfect Infrastructure</p>
       </footer>
     </div>
   );

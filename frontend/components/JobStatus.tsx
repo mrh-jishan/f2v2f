@@ -2,14 +2,12 @@
 
 import { useState, useEffect } from 'react';
 import { getJobStatus, getDownloadUrl, JobStatus } from '@/lib/api';
-import FilePreview from './FilePreview';
 
 interface JobStatusComponentProps {
   jobId: string;
   onComplete: (result: JobStatus) => void;
   onError: (error: string) => void;
   onProgress?: (progress: number, status: string) => void;
-  wsData?: JobStatus;
 }
 
 export default function JobStatusComponent({
@@ -17,38 +15,18 @@ export default function JobStatusComponent({
   onComplete,
   onError,
   onProgress,
-  wsData,
 }: JobStatusComponentProps) {
   const [status, setStatus] = useState<JobStatus | null>(null);
-
-  // Sync with wsData if provided
-  useEffect(() => {
-    if (wsData) {
-      setStatus(wsData);
-
-      if (onProgress && (wsData.status === 'pending' || wsData.status === 'running')) {
-        onProgress(wsData.progress, wsData.status);
-      }
-
-      if (wsData.status === 'completed') {
-        onComplete(wsData);
-      } else if (wsData.status === 'failed') {
-        onError(wsData.error || 'Job failed');
-      }
-    }
-  }, [wsData, onComplete, onError, onProgress]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Only poll if wsData is NOT available
-    if (wsData) return;
-
     let mounted = true;
     const interval = setInterval(async () => {
       try {
         const jobStatus = await getJobStatus(jobId);
         if (mounted) {
           setStatus(jobStatus);
-
+          
           // Call onProgress callback if provided
           if (onProgress && (jobStatus.status === 'pending' || jobStatus.status === 'running')) {
             onProgress(jobStatus.progress, jobStatus.status);
@@ -56,14 +34,17 @@ export default function JobStatusComponent({
 
           if (jobStatus.status === 'completed') {
             onComplete(jobStatus);
+            setLoading(false);
           } else if (jobStatus.status === 'failed') {
             onError(jobStatus.error || 'Job failed');
+            setLoading(false);
           }
         }
       } catch (error) {
         if (mounted) {
           const message = error instanceof Error ? error.message : 'Failed to fetch status';
           onError(message);
+          setLoading(false);
         }
       }
     }, 500);
@@ -143,19 +124,12 @@ export default function JobStatusComponent({
 
       {/* Download Button */}
       {status.status === 'completed' && status.result_url && (
-        <div className="space-y-4">
-          <FilePreview
-            url={getDownloadUrl(status.result_url.split('/').pop() || '')}
-            filename={status.status === 'completed' && status.operation === 'encode' ? 'Encoded Video.mp4' : (status.original_filename || 'restored_file')}
-          />
-
-          <a
-            href={getDownloadUrl(status.result_url.split('/').pop() || '')}
-            className="block w-full bg-gradient-to-r from-green-600 to-green-700 text-white font-semibold py-3 rounded-lg hover:opacity-90 transition text-center shadow-lg shadow-green-900/20"
-          >
-            📥 Download {status.operation === 'encode' ? 'Video' : 'Restored File'}
-          </a>
-        </div>
+        <a
+          href={getDownloadUrl(status.result_url.split('/').pop() || '')}
+          className="block w-full bg-gradient-to-r from-green-600 to-green-700 text-white font-semibold py-3 rounded-lg hover:opacity-90 transition text-center"
+        >
+          📥 Download Result
+        </a>
       )}
     </div>
   );

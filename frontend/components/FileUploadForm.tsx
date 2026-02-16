@@ -14,8 +14,6 @@ const DEFAULT_ENCODE_CONFIG = {
   height: 1080,
   fps: 30,
   chunk_size: 4096,
-  use_compression: true,
-  compression_level: 3,
 };
 
 export default function FileUploadForm({ mode, onJobStart, onError }: FileUploadFormProps) {
@@ -30,7 +28,7 @@ export default function FileUploadForm({ mode, onJobStart, onError }: FileUpload
     }
   }, []);
 
-  const handleConfigChange = (key: string, value: any) => {
+  const handleConfigChange = (key: string, value: number) => {
     setConfig((prev) => ({
       ...prev,
       [key]: value,
@@ -55,8 +53,6 @@ export default function FileUploadForm({ mode, onJobStart, onError }: FileUpload
           height: config.height,
           fps: config.fps,
           chunk_size: config.chunk_size,
-          use_compression: config.use_compression,
-          compression_level: config.compression_level,
         };
         const { job_id } = await startEncode(request);
         onJobStart(job_id, file.name);
@@ -158,42 +154,6 @@ export default function FileUploadForm({ mode, onJobStart, onError }: FileUpload
             <div className="text-xs text-gray-400 mt-1">
               Smaller = more frames = slower but clearer (1KB-10MB)
             </div>
-          </div>
-
-          {/* Compression Support */}
-          <div className="pt-4 border-t border-slate-700 space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <label className="block font-semibold text-primary">High-Speed Compression</label>
-                <p className="text-xs text-gray-400">Reduce output size significantly before encoding</p>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  className="sr-only peer"
-                  checked={config.use_compression}
-                  onChange={(e) => handleConfigChange('use_compression', e.target.checked)}
-                />
-                <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-              </label>
-            </div>
-
-            {config.use_compression && (
-              <div className="animate-in fade-in slide-in-from-top-1">
-                <label className="block text-sm mb-2">
-                  Compression Level: {config.compression_level}
-                  <span className="ml-2 text-xs text-gray-500">(1-22, higher is slower but smaller)</span>
-                </label>
-                <input
-                  type="range"
-                  min="1"
-                  max="22"
-                  value={config.compression_level}
-                  onChange={(e) => handleConfigChange('compression_level', parseInt(e.target.value))}
-                  className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-primary"
-                />
-              </div>
-            )}
           </div>
         </div>
       )}

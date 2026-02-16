@@ -2,10 +2,9 @@ use crate::error::{F2V2FError, Result};
 use crate::config::DecodeConfig;
 use sha2::{Sha256, Digest};
 use std::fs::File;
-use std::io::{Write, Read, BufReader};
+use std::io::{Write, Read, Cursor};
 use std::path::Path;
 use tracing::info;
-use tempfile;
 
 /// Decodes a video back to the original file
 pub struct Decoder {
@@ -17,8 +16,11 @@ pub struct Decoder {
 pub struct DecodedFileInfo {
     pub extracted_size: u64,
     pub checksum: String,
-    pub matches_checksum: bool,
+    pub was_compressed: bool,
 }
+
+// Zstd magic number: 0x28, 0xB5, 0x2F, 0xFD
+const ZSTD_MAGIC: &[u8] = &[0x28, 0xB5, 0x2F, 0xFD];
 
 impl Decoder {
     pub fn new(config: DecodeConfig) -> Result<Self> {
@@ -26,106 +28,69 @@ impl Decoder {
         Ok(Self { config })
     }
 
-    /// Decode a video back to file
+    /// Detect if data is zstd compressed by checking magic bytes
+    fn is_zstd_compressed(data: &[u8]) -> bool {
+        data.len() >= 4 && &data[0..4] == ZSTD_MAGIC
+    }
+
+    /// Decode a video back to file with automatic decompression
+    /// 
+    /// Process:
+    /// 1. Extract all data from video frames
+    /// 2. Detect if it's zstd compressed
+    /// 3. Decompress if needed
+    /// 4. Write original file
+    /// 5. Verify checksum
     pub async fn decode<P: AsRef<Path>>(&self, input: P, output: P) -> Result<DecodedFileInfo> {
         let input_path = input.as_ref();
         let output_path = output.as_ref();
 
-        info!("Starting file decoding: {}", input_path.display());
+        info!("🎬 Starting video extraction from: {}", input_path.display());
 
-        // Use a temporary file for extraction if compression is enabled
-        if self.config.use_compression {
-            let mut temp_file = tempfile::NamedTempFile::new()?;
-            info!("Extracting compressed data to temp file: {}", temp_file.path().display());
-            
-            let (_extracted_size, _checksum) = self
-                .process_video(input_path, &mut temp_file)
-                .await?;
-            
-            temp_file.as_file_mut().flush()?;
-            
-            // Re-open for reading
-            let temp_reader = BufReader::new(File::open(temp_file.path())?);
-            
-            let mut final_output = File::create(output_path)?;
-            let mut hasher = Sha256::new();
-            
-            info!("Decompressing extracted data...");
-            let start = std::time::Instant::now();
-            
-            let mut total_restored = 0;
-            // Use a limited reader if encoded_size is set
-            if let Some(limit) = self.config.encoded_size {
-                let mut limited = temp_reader.take(limit);
-                let mut zstd_decoder = zstd::stream::read::Decoder::new(&mut limited)?;
-                let mut buffer = vec![0u8; 128 * 1024];
-                loop {
-                    let n = zstd_decoder.read(&mut buffer)?;
-                    if n == 0 { break; }
-                    hasher.update(&buffer[..n]);
-                    final_output.write_all(&buffer[..n])?;
-                    total_restored += n as u64;
-                }
-            } else {
-                let mut zstd_decoder = zstd::stream::read::Decoder::new(temp_reader)?;
-                let mut buffer = vec![0u8; 128 * 1024];
-                loop {
-                    let n = zstd_decoder.read(&mut buffer)?;
-                    if n == 0 { break; }
-                    hasher.update(&buffer[..n]);
-                    final_output.write_all(&buffer[..n])?;
-                    total_restored += n as u64;
-                }
-            }
-            
-            let duration = start.elapsed();
-            let checksum = format!("{:x}", hasher.finalize());
-            info!("Decompression complete in {:?}. Restored {} bytes", duration, total_restored);
-            
-            Ok(DecodedFileInfo {
-                extracted_size: total_restored,
-                checksum,
-                matches_checksum: false,
-            })
+        // Extract all frame data from video
+        let extracted_data = self.extract_frame_data(input_path).await?;
+        info!("✅ Extracted {} bytes from video", extracted_data.len());
+
+        // Detect compression
+        let was_compressed = Self::is_zstd_compressed(&extracted_data);
+        info!("🔍 Data format: {}", 
+            if was_compressed { "Zstd compressed" } else { "Raw" });
+
+        // Decompress if needed
+        let final_data = if was_compressed {
+            info!("🗜️  Decompressing with Zstd...");
+            let mut decoder = zstd::stream::read::Decoder::new(Cursor::new(&extracted_data))?;
+            let mut decompressed = Vec::new();
+            decoder.read_to_end(&mut decompressed)?;
+            info!("✅ Decompressed: {} bytes → {} bytes", 
+                extracted_data.len(), decompressed.len());
+            decompressed
         } else {
-            let mut final_output = File::create(output_path)?;
-            let (_extracted_size, _checksum) = self
-                .process_video(input_path, &mut final_output)
-                .await?;
-            
-            // Truncate if encoded_size is known
-            if let Some(limit) = self.config.encoded_size {
-                final_output.set_len(limit)?;
-            }
-            
-            final_output.sync_all()?;
-            
-            // Recalculate checksum if truncated
-            let checksum = if self.config.encoded_size.is_some() {
-                let mut hasher = Sha256::new();
-                let mut f = File::open(output_path)?;
-                std::io::copy(&mut f, &mut hasher)?;
-                format!("{:x}", hasher.finalize())
-            } else {
-                _checksum
-            };
+            extracted_data.clone()
+        };
 
-            Ok(DecodedFileInfo {
-                extracted_size: self.config.encoded_size.unwrap_or(_extracted_size),
-                checksum,
-                matches_checksum: false,
-            })
-        }
+        // Calculate checksum and write file
+        let mut hasher = Sha256::new();
+        hasher.update(&final_data);
+        let checksum = format!("{:x}", hasher.finalize());
+
+        let mut output_file = File::create(output_path)?;
+        output_file.write_all(&final_data)?;
+        output_file.sync_all()?;
+
+        info!("💾 Wrote {} bytes to {}", final_data.len(), output_path.display());
+        info!("📋 Checksum: {}", checksum);
+
+        Ok(DecodedFileInfo {
+            extracted_size: final_data.len() as u64,
+            checksum,
+            was_compressed,
+        })
     }
 
-    async fn process_video<W: Write>(
-        &self,
-        video_path: &Path,
-        writer: &mut W,
-    ) -> Result<(u64, String)> {
-        let mut hasher = Sha256::new();
-        let mut total_bytes_written: u64 = 0;
-
+    /// Extract all data from video frames
+    async fn extract_frame_data<P: AsRef<Path>>(&self, video_path: P) -> Result<Vec<u8>> {
+        let path = video_path.as_ref();
         let composer = crate::video_composer::VideoComposer::new(
             self.config.width,
             self.config.height,
@@ -138,50 +103,41 @@ impl Decoder {
             42,
         );
 
-        // Process frames one by one via callback
-        composer.extract_frames(video_path, |frame| {
-            let data = generator.decode_from_image(&frame, self.config.chunk_size)?;
-            
-            hasher.update(&data);
-            writer.write_all(&data).map_err(|e| F2V2FError::Io(e.to_string()))?;
-            total_bytes_written += data.len() as u64;
-            
-            Ok(())
-        }).await?;
+        // Extract frames from video
+        let frames = composer.extract_frames(path).await?;
+        info!("📸 Extracted {} frames from video", frames.len());
 
-        let checksum = format!("{:x}", hasher.finalize());
-        Ok((total_bytes_written, checksum))
+        let mut all_data = Vec::new();
+        for (i, frame) in frames.iter().enumerate() {
+            let frame_data = generator.decode_from_image(frame, self.config.chunk_size)?;
+            all_data.extend_from_slice(&frame_data);
+            if (i + 1) % 10 == 0 {
+                info!("  Processed {} frames...", i + 1);
+            }
+        }
+
+        Ok(all_data)
     }
 
-    // fn check_operation_health(&self, frame_number: u64) -> Result<()> {
-    //     // Check for memory pressure, cancellation signals, etc.
-    //     if frame_number % 100 == 0 {
-    //         debug!("Health check at frame {}", frame_number);
-    //     }
-    //     Ok(())
-    // }
-
-    /// Verify that decoded file matches original checksum
+    /// Verify that decoded file matches expected checksum
     pub fn verify_checksum<P: AsRef<Path>>(
         &self,
         file_path: P,
         expected_checksum: &str,
     ) -> Result<bool> {
         let path = file_path.as_ref();
-        let file = File::open(path)?;
-        let mut reader = std::io::BufReader::new(file);
-
+        let mut file = File::open(path)?;
         let mut hasher = Sha256::new();
         let mut buffer = vec![0u8; 1024 * 1024]; // 1MB chunks
 
         loop {
-            match reader.read(&mut buffer) {
+            match file.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(n) => {
                     hasher.update(&buffer[..n]);
                 }
                 Err(e) => {
-                    return Err(F2V2FError::Io(e.to_string()).into());
+                    return Err(F2V2FError::Io(e.to_string()));
                 }
             }
         }
@@ -194,18 +150,31 @@ impl Decoder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
-    use std::io::Write;
 
-    #[tokio::test]
-    async fn test_decoder_creation() {
+    #[test]
+    fn test_decoder_creation() {
         let config = DecodeConfig::default();
         let decoder = Decoder::new(config).unwrap();
         assert!(decoder.config.validate().is_ok());
     }
 
+    #[test]
+    fn test_zstd_magic_detection() {
+        let zstd_data = vec![0x28, 0xB5, 0x2F, 0xFD, 0x00, 0x00];
+        assert!(Decoder::is_zstd_compressed(&zstd_data));
+
+        let raw_data = vec![0x00, 0x01, 0x02, 0x03];
+        assert!(!Decoder::is_zstd_compressed(&raw_data));
+
+        let empty = vec![];
+        assert!(!Decoder::is_zstd_compressed(&empty));
+    }
+
     #[tokio::test]
     async fn test_verify_checksum() -> Result<()> {
+        use tempfile::NamedTempFile;
+        use std::io::Write;
+
         let config = DecodeConfig::default();
         let decoder = Decoder::new(config)?;
 

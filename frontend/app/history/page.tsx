@@ -2,87 +2,92 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import FileHistory from '@/components/FileHistory';
+import FileHistory, { JobProgress } from '@/components/FileHistory';
 import { FileRecord } from '@/lib/api';
-import JobQueue from '@/components/JobQueue';
-import { useWebSocket } from '@/lib/useWebSocket';
 
 export default function HistoryPage() {
   const [selectedFile, setSelectedFile] = useState<FileRecord | null>(null);
-  const { activeJobs, removeJob } = useWebSocket();
+  const [historyRefresh] = useState(0);
+  const [activeJobs] = useState<JobProgress[]>([]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200">
-      {/* Background Effects */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
-        <div className="absolute top-[20%] right-[-5%] w-[30%] h-[30%] bg-primary/5 blur-[100px] rounded-full"></div>
-        <div className="absolute bottom-[20%] left-[-5%] w-[30%] h-[30%] bg-secondary/5 blur-[100px] rounded-full"></div>
-      </div>
-
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
       {/* Header */}
-      <header className="border-b border-white/5 bg-slate-950/50 backdrop-blur-md sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2 group">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-white font-bold shadow-lg shadow-primary/20 group-hover:scale-110 transition-transform">
-              f
-            </div>
-            <span className="text-xl font-bold tracking-tight bg-gradient-to-r from-white to-white/60 bg-clip-text text-transparent">
-              f2v2f
-            </span>
-          </Link>
-          <nav className="hidden md:flex items-center gap-1 bg-white/5 p-1 rounded-full border border-white/5">
-            <Link href="/encode" className="px-5 py-1.5 rounded-full text-sm font-medium transition text-white/50 hover:text-white">✨ Encode</Link>
-            <Link href="/decode" className="px-5 py-1.5 rounded-full text-sm font-medium transition text-white/50 hover:text-white">🎥 Decode</Link>
-            <Link href="/history" className="px-5 py-1.5 rounded-full text-sm font-semibold transition bg-white/10 text-white shadow-sm ring-1 ring-white/10">📁 History</Link>
-          </nav>
-          <div className="w-8 h-8"></div>
+      <header className="bg-slate-900/50 backdrop-blur border-b border-primary/10 sticky top-0 z-50">
+        <div className="max-w-6xl mx-auto px-4 py-6">
+          <div className="flex items-center justify-between">
+            <Link href="/" className="text-3xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
+              🎬 f2v2f
+            </Link>
+            <p className="text-gray-400">File to Video to File Converter</p>
+          </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-6 py-12 relative z-10">
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-12">
-          <div className="lg:col-span-3">
-            <div className="space-y-12">
-              <section>
-                <h1 className="text-4xl font-extrabold tracking-tight text-white mb-4">
-                  Registry <span className="text-slate-500">Archive</span>
-                </h1>
-                <p className="text-slate-400 max-w-2xl text-lg leading-relaxed">
-                  Browse the complete history of your file conversions. View metadata,
-                  watch encoded videos, and download restored payloads.
-                </p>
-              </section>
+      <main className="max-w-6xl mx-auto px-4 py-8">
+        {/* Tab Navigation */}
+        <div className="flex gap-4 mb-8 border-b border-primary/20">
+          <Link
+            href="/encode"
+            className="px-4 py-3 font-semibold transition border-b-2 border-transparent text-gray-400 hover:text-gray-300"
+          >
+            ✨ Encode
+          </Link>
+          <Link
+            href="/decode"
+            className="px-4 py-3 font-semibold transition border-b-2 border-transparent text-gray-400 hover:text-gray-300"
+          >
+            🎥 Decode
+          </Link>
+          <Link
+            href="/history"
+            className="px-4 py-3 font-semibold transition border-b-2 border-primary text-primary"
+          >
+            📁 History
+          </Link>
+        </div>
 
+        {/* Content Area */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="lg:col-span-2">
+            <div className="space-y-6">
+              <h2 className="text-2xl font-bold">Previous Files & Videos</h2>
+              <p className="text-gray-400 mb-6">
+                Browse and watch your previously encoded or decoded files. Click on any file to view
+                details and download.
+              </p>
               <FileHistory
+                refreshTrigger={historyRefresh}
                 selectedFile={selectedFile}
                 onFileSelect={setSelectedFile}
+                activeJobs={activeJobs}
               />
             </div>
           </div>
 
-          {/* Sidebar - Process Queue */}
-          <div className="space-y-8">
-            <h2 className="text-xs uppercase font-black tracking-[0.2em] text-slate-500 flex items-center justify-between">
-              Live Pipeline
-              <span className="bg-slate-800 text-slate-400 px-2 py-0.5 rounded text-[10px]">{activeJobs.length}</span>
-            </h2>
-            <JobQueue
-              jobs={activeJobs}
-              onRemove={removeJob}
-            />
-
-            {/* Legend */}
-            <div className="space-y-4">
-              <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500 px-1">Registry Legend</h3>
-              <div className="space-y-2">
-                <div className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.02] border border-white/5">
-                  <span className="w-2 h-2 rounded-full bg-primary"></span>
-                  <span className="text-xs font-bold text-slate-400">Encoded MP4 Asset</span>
-                </div>
-                <div className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.02] border border-white/5">
-                  <span className="w-2 h-2 rounded-full bg-secondary"></span>
-                  <span className="text-xs font-bold text-slate-400">Decoded Original Payload</span>
-                </div>
+          {/* Sidebar */}
+          <div className="bg-slate-800/50 rounded-lg p-6 border border-primary/20 h-fit">
+            <h3 className="text-lg font-semibold mb-4">ℹ️ File Management</h3>
+            <div className="space-y-4 text-sm text-gray-400">
+              <div>
+                <p className="font-semibold text-white mb-1">📂 View Files:</p>
+                <p>Click any file to view details, play videos, or download</p>
+              </div>
+              <div>
+                <p className="font-semibold text-white mb-1">🗑️ Delete Files:</p>
+                <p>Hover over files to see delete button, or use delete in detail view</p>
+              </div>
+              <div>
+                <p className="font-semibold text-white mb-1">🎬 Video Playback:</p>
+                <p>Videos play directly in browser. If issues, download for VLC</p>
+              </div>
+              <div className="pt-4 border-t border-slate-700">
+                <p className="text-xs font-semibold text-primary mb-2">STORAGE</p>
+                <p className="text-xs">Files stored locally on server</p>
+              </div>
+              <div className="pt-4 border-t border-slate-700">
+                <p className="text-xs font-semibold text-primary mb-2">FILE TYPES</p>
+                <p className="text-xs">🎬 Encoded videos • 📄 Decoded originals</p>
               </div>
             </div>
           </div>
@@ -90,9 +95,10 @@ export default function HistoryPage() {
       </main>
 
       {/* Footer */}
-      <footer className="max-w-7xl mx-auto px-6 py-12 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-6 opacity-30">
-        <p className="text-sm font-medium">f2v2f System Registry v2.1</p>
-        <p className="text-xs text-slate-500">Optimizing Data Persistence</p>
+      <footer className="bg-slate-900/50 border-t border-primary/10 mt-12">
+        <div className="max-w-6xl mx-auto px-4 py-6 text-center text-gray-500 text-sm">
+          <p>f2v2f © 2026 • Novel File Encoding System</p>
+        </div>
       </footer>
     </div>
   );
