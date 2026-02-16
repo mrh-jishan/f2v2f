@@ -47,6 +47,7 @@ impl VideoComposer {
 
         Ok(cmd)
     }
+
    
     /// Create video from sequence of frames
     pub fn compose_from_frames<P: AsRef<Path>>(
@@ -93,12 +94,43 @@ impl VideoComposer {
         chunk_size: usize,
         output_path: P,
     ) -> Result<()> {
+        self.compose_from_file_data_blocking_with_original(file_data, chunk_size, 0, output_path)
+    }
+
+    /// Create video from geometric art frames based on file data (BLOCKING)
+    /// With optional original file size tracking for metadata
+    pub fn compose_from_file_data_blocking_with_original<P: AsRef<Path>>(
+        &self,
+        file_data: Vec<u8>,
+        chunk_size: usize,
+        original_size: u64,
+        output_path: P,
+    ) -> Result<()> {
         let output = output_path.as_ref();
         info!("Creating video from file data to {}", output.display());
+
+        // Write metadata to sidecar file (.meta)
+        let meta_path = if let Some(stem) = output.file_stem() {
+            let mut meta = stem.to_os_string();
+            meta.push(".mp4meta");
+            output.parent().map(|p| p.join(&meta)).unwrap_or_else(|| Path::new(&meta).to_path_buf())
+        } else {
+            output.with_extension("mp4meta")
+        };
+        
+        {
+            let mut meta_file = std::fs::File::create(&meta_path)?;
+            let original_or_encoded = if original_size > 0 { original_size } else { file_data.len() as u64 };
+            let meta = format!("chunk_size={}\ncompressed_size={}\noriginal_size={}\n", 
+                chunk_size, file_data.len(), original_or_encoded);
+            meta_file.write_all(meta.as_bytes())?;
+        }
+        info!("📝 Metadata written to {}", meta_path.display());
 
         let num_chunks = (file_data.len() + chunk_size - 1) / chunk_size;
         let generator = GeometricArtGenerator::new(self.width, self.height, 42);
 
+        // Use FFmpeg encoding without metadata
         let mut child = Self::ffmpeg_encode(self.width, self.height, self.fps, &output.to_string_lossy())?;
         let mut stdin = child.stdin.take().ok_or_else(|| F2V2FError::EncodingError("No stdin".to_string()))?;
 

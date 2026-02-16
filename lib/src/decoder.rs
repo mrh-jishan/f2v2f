@@ -28,6 +28,45 @@ impl Decoder {
         Ok(Self { config })
     }
 
+    /// Extract metadata (chunk_size, compressed_size, original_size) from sidecar .mp4meta file
+    pub async fn extract_video_metadata<P: AsRef<Path>>(&self, video_path: P) -> Result<(usize, u64, u64)> {
+        let path = video_path.as_ref();
+        let meta_path = path.with_extension("mp4meta");
+        
+        if !meta_path.exists() {
+            info!("⚠️  No metadata file found at {}", meta_path.display());
+            return Ok((self.config.chunk_size, 0, 0));
+        }
+
+        let content = std::fs::read_to_string(&meta_path)?;
+        let mut chunk_size = self.config.chunk_size;
+        let mut compressed_size = 0u64;
+        let mut original_size = 0u64;
+
+        for line in content.lines() {
+            if let Some(value) = line.strip_prefix("chunk_size=") {
+                if let Ok(size) = value.parse::<usize>() {
+                    chunk_size = size;
+                    info!("📖 Read chunk_size from metadata: {}", size);
+                }
+            }
+            if let Some(value) = line.strip_prefix("compressed_size=") {
+                if let Ok(size) = value.parse::<u64>() {
+                    compressed_size = size;
+                    info!("📖 Read compressed_size from metadata: {}", size);
+                }
+            }
+            if let Some(value) = line.strip_prefix("original_size=") {
+                if let Ok(size) = value.parse::<u64>() {
+                    original_size = size;
+                    info!("📖 Read original_size from metadata: {}", size);
+                }
+            }
+        }
+
+        Ok((chunk_size, compressed_size, original_size))
+    }
+
     /// Detect if data is zstd compressed by checking magic bytes
     fn is_zstd_compressed(data: &[u8]) -> bool {
         data.len() >= 4 && &data[0..4] == ZSTD_MAGIC
@@ -36,20 +75,31 @@ impl Decoder {
     /// Decode a video back to file with automatic decompression
     /// 
     /// Process:
-    /// 1. Extract all data from video frames
-    /// 2. Detect if it's zstd compressed
-    /// 3. Decompress if needed
-    /// 4. Write original file
-    /// 5. Verify checksum
+    /// 1. Extract chunk_size and size info from metadata
+    /// 2. Extract all data from video frames using correct chunk size
+    /// 3. Trim padding to compressed data size
+    /// 4. Detect if it's zstd compressed
+    /// 5. Decompress if needed
+    /// 6. Write original file
+    /// 7. Verify checksum
     pub async fn decode<P: AsRef<Path>>(&self, input: P, output: P) -> Result<DecodedFileInfo> {
         let input_path = input.as_ref();
         let output_path = output.as_ref();
 
         info!("🎬 Starting video extraction from: {}", input_path.display());
 
-        // Extract all frame data from video
-        let extracted_data = self.extract_frame_data(input_path).await?;
-        info!("✅ Extracted {} bytes from video", extracted_data.len());
+        // Extract metadata from sidecar file to get correct chunk size and size info
+        let (actual_chunk_size, compressed_size, original_size) = self.extract_video_metadata(input_path).await?;
+        
+        // Extract all frame data from video using correct chunk size
+        let mut extracted_data = self.extract_frame_data(input_path, actual_chunk_size, compressed_size).await?;
+        info!("✅ Extracted {} bytes from video (compressed_size={})", extracted_data.len(), compressed_size);
+
+        // Trim to actual compressed data size (remove padding)
+        if compressed_size > 0 && (extracted_data.len() as u64) > compressed_size {
+            info!("🔪 Trimming padding: {} bytes → {} bytes", extracted_data.len(), compressed_size);
+            extracted_data.truncate(compressed_size as usize);
+        }
 
         // Detect compression
         let was_compressed = Self::is_zstd_compressed(&extracted_data);
@@ -88,8 +138,13 @@ impl Decoder {
         })
     }
 
-    /// Extract all data from video frames
-    async fn extract_frame_data<P: AsRef<Path>>(&self, video_path: P) -> Result<Vec<u8>> {
+    /// Extract all data from video frames using the correct chunk size
+    async fn extract_frame_data<P: AsRef<Path>>(
+        &self, 
+        video_path: P, 
+        chunk_size: usize,
+        compressed_size: u64,
+    ) -> Result<Vec<u8>> {
         let path = video_path.as_ref();
         let composer = crate::video_composer::VideoComposer::new(
             self.config.width,
@@ -105,15 +160,21 @@ impl Decoder {
 
         // Extract frames from video
         let frames = composer.extract_frames(path).await?;
-        info!("📸 Extracted {} frames from video", frames.len());
+        info!("📸 Extracted {} frames from video (chunk_size={})", frames.len(), chunk_size);
 
         let mut all_data = Vec::new();
         for (i, frame) in frames.iter().enumerate() {
-            let frame_data = generator.decode_from_image(frame, self.config.chunk_size)?;
+            let frame_data = generator.decode_from_image(frame, chunk_size)?;
             all_data.extend_from_slice(&frame_data);
             if (i + 1) % 10 == 0 {
                 info!("  Processed {} frames...", i + 1);
             }
+        }
+
+        // Trim to actual compressed data size if we know it (to remove padding)
+        if compressed_size > 0 && (all_data.len() as u64) > compressed_size {
+            info!("🔪 Trimming padding: {} bytes → {} bytes", all_data.len(), compressed_size);
+            all_data.truncate(compressed_size as usize);
         }
 
         Ok(all_data)

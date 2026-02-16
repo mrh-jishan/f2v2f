@@ -214,9 +214,10 @@ pub extern "C" fn f2v2f_encode_file(
         handle_ref.config.fps,
     );
 
-    match composer.compose_from_file_data_blocking(
+    match composer.compose_from_file_data_blocking_with_original(
         compressed_data,
         info.chunk_size,
+        info.original_file_size,  // Pass original file size for metadata
         output_path_str,
     ) {
         Ok(_) => {
