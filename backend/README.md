@@ -25,12 +25,12 @@ High-performance REST API server built with Go and Fiber, utilizing the Rust `f2
 
 ### Build and Run
 ```bash
-cd gbackend
+cd backend
 go build -o gserver main.go
 ./gserver
 ```
 
-The server starts on `http://localhost:5001` by default.
+The server starts on `http://localhost:5000` by default.
 
 ## 🔌 API Endpoints
 
@@ -47,7 +47,7 @@ The server starts on `http://localhost:5001` by default.
 ## 🛠️ Configuration
 Configuration is currently hardcoded in `main.go` for simplicity but can be moved to `.env`:
 - `BodyLimit`: 50GB (configurable)
-- `Port`: 5001
+- `Port`: 5000
 
 ## ⚖️ License
 MIT

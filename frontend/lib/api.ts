@@ -1,4 +1,4 @@
-let API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001';
+let API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 // Ensure /api is appended if not already present
 if (!API_BASE.endsWith('/api')) {
   API_BASE = API_BASE + '/api';

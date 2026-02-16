@@ -23,7 +23,7 @@ make all           # Build everything (core, backend, frontend)
 ### Run It
 ```bash
 # Terminal 1: Start Backend
-make backend-run   # runs on http://localhost:5001
+make backend-run   # runs on http://localhost:5000
 
 # Terminal 2: Start Frontend
 make frontend-dev  # runs on http://localhost:3000
@@ -51,7 +51,7 @@ make frontend-dev  # runs on http://localhost:3000
 cd f2v2f
 docker-compose -f docker-compose.new.yml up
 # Frontend: http://localhost:3000
-# Backend: http://localhost:5001
+# Backend: http://localhost:5000
 ```
 
 ## File Locations
@@ -131,31 +131,31 @@ f2v2f/
 
 ## API Quick Reference
 
-All endpoints: `http://localhost:5001/api/`
+All endpoints: `http://localhost:5000/api/`
 
 ```bash
 # Start encoding
 curl -X POST -F "file=@myfile.pdf" \
-  http://localhost:5001/api/encode
+  http://localhost:5000/api/encode
 # Returns: {"job_id": "xxx", "status": "pending"}
 
 # Check status
-curl http://localhost:5001/api/status/xxx
+curl http://localhost:5000/api/status/xxx
 # Returns: status, progress, etc.
 
 # Get file history
-curl http://localhost:5001/api/files
+curl http://localhost:5000/api/files
 # Returns: array of files
 
 # Download result
-curl -O http://localhost:5001/api/download/output.mp4
+curl -O http://localhost:5000/api/download/output.mp4
 ```
 
 ## Configuration
 
 **Backend** (.env):
 ```bash
-PORT=5001
+PORT=5000
 ENCODING_WIDTH=1920
 ENCODING_HEIGHT=1080
 ENCODING_FPS=30
@@ -163,7 +163,7 @@ ENCODING_FPS=30
 
 **Frontend** (.env.local):
 ```bash
-NEXT_PUBLIC_API_URL=http://localhost:5001/api
+NEXT_PUBLIC_API_URL=http://localhost:5000/api
 ```
 
 ## Development Tips

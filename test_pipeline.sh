@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Configuration
-API_URL="http://localhost:5001"
+API_URL="http://localhost:5000"
 TEST_FILE="test_data.bin"
 ENCODED_VIDEO="encoded_video.mp4"
 RESTORED_FILE="restored_data.bin"

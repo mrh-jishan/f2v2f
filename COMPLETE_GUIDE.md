@@ -34,7 +34,7 @@ make all           # Builds Rust library, Go backend, and installs Frontend
 **Terminal 1 - Backend (Go):**
 ```bash
 make backend-run
-# You should see: Starting Go server on http://localhost:5001
+# You should see: Starting Go server on http://localhost:5000
 ```
 
 **Terminal 2 - Frontend (Next.js):**
@@ -79,7 +79,7 @@ The new Go backend is powered by **Fiber**.
 - **CORS:** Enabled for port 3000.
 
 **Configuration Values:**
-- Port: 5001
+- Port: 5000
 - Max Upload: 50GB
 - Database: SQLite
 
@@ -131,7 +131,7 @@ f2v2f/
 
 **Backend (Go):**
 ```bash
-PORT=5001
+PORT=5000
 ENCODING_WIDTH=1920
 ENCODING_HEIGHT=1080
 ENCODING_FPS=30
@@ -139,7 +139,7 @@ ENCODING_FPS=30
 
 **Frontend:**
 ```bash
-NEXT_PUBLIC_API_URL=http://localhost:5001
+NEXT_PUBLIC_API_URL=http://localhost:5000
 ```
 
 ---

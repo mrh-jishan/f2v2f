@@ -35,15 +35,15 @@ RUN mkdir -p uploads outputs
 
 # Set environment variables
 ENV GOLANG_ENV=production
-ENV PORT=5001
+ENV PORT=5000
 
 # Expose port
-EXPOSE 5001
+EXPOSE 5000
 
 # Health check (using curl as it's common in Go images or we can install it)
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
-    CMD curl -f http://localhost:5001/health || exit 1
+    CMD curl -f http://localhost:5000/health || exit 1
 
 # Run Go server
 CMD ["./server"]

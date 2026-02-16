@@ -122,7 +122,7 @@ func main() {
 	app.Get("/api/download/:filename", handleDownload)
 	app.Get("/api/files", handleListFiles)
 
-	log.Fatal(app.Listen(":5001"))
+	log.Fatal(app.Listen(":5000"))
 }
 
 func handleEncode(c *fiber.Ctx) error {
@@ -190,7 +190,7 @@ func handleEncode(c *fiber.Ctx) error {
 		job.Status = StatusCompleted
 		job.Progress = 100
 		job.ResultURL = fmt.Sprintf("/api/download/%s", outputName)
-                job.EncodedDataSize = encodedSize
+		job.EncodedDataSize = encodedSize
 		// Record in DB
 		stat, _ := os.Stat(outputPath)
 		_, _ = db.Exec(`

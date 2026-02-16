@@ -50,14 +50,14 @@ Visit http://localhost:3000 to start encoding!
 
 ## API Usage (Go/Fiber)
 
-The Go backend exposes a REST API at `http://localhost:5001/api/`.
+The Go backend exposes a REST API at `http://localhost:5000/api/`.
 
 ```bash
 # Encode a file
-curl -X POST -F "file=@data.zip" http://localhost:5001/api/encode
+curl -X POST -F "file=@data.zip" http://localhost:5000/api/encode
 
 # Check status
-curl http://localhost:5001/api/status/{job_id}
+curl http://localhost:5000/api/status/{job_id}
 ```
 
 ## Project Structure
