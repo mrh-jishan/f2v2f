@@ -65,7 +65,7 @@ curl http://localhost:5000/api/status/{job_id}
 - `lib/`: Rust Core Engine
 - `backend/`: Golang Web Service (Primary)
 - `frontend/`: Next.js Web Application
-- `Makefile.new`: Main build system
+- `Makefile`: Main build system
 
 ## Why Golang?
 We shifted our primary web service to Go to leverage its superior concurrency model (goroutines) and excellent performance as a web server, while keeping the heavy computational logic in Rust.

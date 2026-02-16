@@ -16,7 +16,7 @@ The easiest way to deploy f2v2f is using Docker Compose.
 
 ### Step 1: Build and Start
 ```bash
-docker-compose -f docker-compose.new.yml up --build -d
+docker-compose -f docker-compose.yml up --build -d
 ```
 
 ### Step 2: Verify Services
@@ -25,7 +25,7 @@ docker-compose -f docker-compose.new.yml up --build -d
 
 ### Step 3: Check Logs
 ```bash
-docker-compose -f docker-compose.new.yml logs -f
+docker-compose -f docker-compose.yml logs -f
 ```
 
 ---

@@ -122,7 +122,7 @@ f2v2f/
 │   ├── f2v2f/     # Go-Rust bridge
 │   └── f2v2f.db   # File Registry
 ├── frontend/      # Next.js Web App
-└── Makefile.new   # Build automation
+└── Makefile   # Build automation
 ```
 
 ---

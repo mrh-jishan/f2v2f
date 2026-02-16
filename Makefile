@@ -17,7 +17,7 @@ help:
 	@echo ""
 	@echo "Backend (Golang Fiber):"
 	@echo "  make backend           Build Go backend server"
-	@echo "  make backend-run       Run Go server on http://localhost:5001"
+	@echo "  make backend-run       Run Go server on http://localhost:5000"
 	@echo "  make backend-test      Run Go tests"
 	@echo ""
 	@echo "Frontend (Next.js):"
@@ -78,7 +78,7 @@ backend: core
 	@echo "$(GREEN)✓ Backend ready$(NC)"
 
 backend-run: backend
-	@echo "$(CYAN)Starting Go server on http://localhost:5001$(NC)"
+	@echo "$(CYAN)Starting Go server on http://localhost:5000$(NC)"
 	@cd backend && ./server
 
 backend-test: backend
@@ -131,12 +131,12 @@ all: core backend install-frontend
 	@echo "$(GREEN)✓ All components built successfully$(NC)"
 	@echo ""
 	@echo "$(CYAN)To start development:$(NC)"
-	@echo "  Terminal 1: make backend-run    (Go on :5001)"
+	@echo "  Terminal 1: make backend-run    (Go on :5000)"
 	@echo "  Terminal 2: make frontend-dev   (Next.js on :3000)"
 
 dev:
 	@echo "$(CYAN)Starting full stack development...$(NC)"
-	@echo "$(YELLOW)Backend: http://localhost:5001$(NC)"
+	@echo "$(YELLOW)Backend: http://localhost:5000$(NC)"
 	@echo "$(YELLOW)Frontend: http://localhost:3000$(NC)"
 	@make backend-run & \
 	sleep 2 && \
@@ -154,20 +154,20 @@ docker-build:
 
 docker-up: docker-build
 	@echo "$(CYAN)Starting Docker Compose services...$(NC)"
-	docker-compose -f docker-compose.new.yml up -d
+	docker-compose -f docker-compose.yml up -d
 	@echo "$(GREEN)✓ Services started$(NC)"
 	@echo ""
 	@echo "$(CYAN)Application URLs:$(NC)"
 	@echo "  Frontend:  http://localhost:3000"
-	@echo "  Backend:   http://localhost:5001"
+	@echo "  Backend:   http://localhost:5000"
 
 docker-down:
 	@echo "$(CYAN)Stopping Docker services...$(NC)"
-	docker-compose -f docker-compose.new.yml down
+	docker-compose -f docker-compose.yml down
 	@echo "$(GREEN)✓ Services stopped$(NC)"
 
 docker-logs:
-	docker-compose -f docker-compose.new.yml logs -f
+	docker-compose -f docker-compose.yml logs -f
 
 # ============================================================================
 # TESTING

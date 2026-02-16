@@ -26,8 +26,8 @@ f2v2f/
 │   ├── app/                  # App Router components
 │   ├── components/           # UI components
 │   └── lib/api.ts            # API Client
-├── Makefile.new              # Main build system
-└── docker-compose.new.yml    # Container orchestration
+├── Makefile              # Main build system
+└── docker-compose.yml    # Container orchestration
 ```
 
 ## Architecture: How It All Works

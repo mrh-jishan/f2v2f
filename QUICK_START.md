@@ -40,7 +40,7 @@ make frontend-dev  # runs on http://localhost:3000
 | Build Go backend | `make backend` |
 | Run Go backend | `make backend-run` |
 | Run Next.js | `make frontend-dev` |
-| Run both (Docker) | `docker-compose -f docker-compose.new.yml up` |
+| Run both (Docker) | `docker-compose -f docker-compose.yml up` |
 | Test everything | `make test` |
 | Clean all | `make clean` |
 | View help | `make help` |
@@ -49,7 +49,7 @@ make frontend-dev  # runs on http://localhost:3000
 
 ```bash
 cd f2v2f
-docker-compose -f docker-compose.new.yml up
+docker-compose -f docker-compose.yml up
 # Frontend: http://localhost:3000
 # Backend: http://localhost:5000
 ```
@@ -126,7 +126,7 @@ f2v2f/
 │   ├── app/page.tsx         # Main interface
 │   ├── components/          # React components
 │   └── lib/api.ts           # API calls
-└── Makefile.new             # Build commands
+└── Makefile             # Build commands
 ```
 
 ## API Quick Reference

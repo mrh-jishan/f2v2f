@@ -72,7 +72,7 @@ The frontend runs on **http://localhost:3000**.
 
 ## 🚀 One-Command Startup
 
-You can use the provided `Makefile.new` to start everything:
+You can use the provided `Makefile` to start everything:
 
 ```bash
 # Terminal 1: Build and Run Backend
@@ -121,7 +121,7 @@ f2v2f/
 │   ├── main.go    # Fiber Server
 │   └── outputs/   # Encoded videos
 ├── frontend/      # Next.js UI
-└── Makefile.new   # Build automation
+└── Makefile   # Build automation
 ```
 
 ---
