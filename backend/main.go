@@ -248,7 +248,7 @@ func handleEncode(c *fiber.Ctx) error {
 		}
 		defer encoder.Close()
 
-		encodedSize, err := encoder.Encode(inputPath, outputPath)
+		result, err := encoder.Encode(inputPath, outputPath)
 		if err != nil {
 			job.Status = StatusFailed
 			job.ErrorMessage = err.Error()
@@ -259,15 +259,15 @@ func handleEncode(c *fiber.Ctx) error {
 		job.Status = StatusCompleted
 		job.Progress = 100
 		job.ResultURL = fmt.Sprintf("/api/download/%s", outputName)
-		job.EncodedDataSize = encodedSize
+		job.EncodedDataSize = result.EncodedSize
 		broadcastJob(job)
 
-		// Record in DB
+		// Record in DB - CRITICAL: Save the ACTUAL chunk_size used (may be auto-adjusted)
 		stat, _ := os.Stat(outputPath)
 		_, _ = db.Exec(`
 			INSERT INTO files (id, name, type, size, created_at, video_url, original_file, chunk_size, unencoded_size, use_compression, compression_level, encoded_data_size)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, uuid.New().String(), outputName, "encoded", stat.Size(), time.Now().Format(time.RFC3339), job.ResultURL, file.Filename, cs, file.Size, useCompression, cl, encodedSize)
+		`, uuid.New().String(), outputName, "encoded", stat.Size(), time.Now().Format(time.RFC3339), job.ResultURL, file.Filename, result.ChunkSize, file.Size, useCompression, cl, result.EncodedSize)
 
 		os.Remove(inputPath)
 	}()

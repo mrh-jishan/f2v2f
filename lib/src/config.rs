@@ -109,6 +109,8 @@ pub struct DecodeConfig {
     pub buffer_size: usize,
     /// Verify checksum after decoding
     pub verify_checksum: bool,
+    /// Exact encoded data size (to remove padding)
+    pub encoded_data_size: Option<u64>,
 }
 
 impl Default for DecodeConfig {
@@ -120,6 +122,7 @@ impl Default for DecodeConfig {
             num_threads: num_cpus::get(),
             buffer_size: 1024 * 1024, // 1MB
             verify_checksum: true,
+            encoded_data_size: None,
         }
     }
 }

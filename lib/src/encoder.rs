@@ -71,36 +71,23 @@ impl Encoder {
         };
 
         let encoded_size = encoded_data.len() as u64;
-        let compression_ratio = file_size as f32 / encoded_size as f32;
         
-        // Calculate optimal chunk size to limit frame count AND adapt to compression
-        // Key insight: If data doesn't compress well, use MUCH larger chunks to reduce frame count
-        // For example, if compression is poor (1.04x), we need bigger chunks
-        let max_frames = 500;  // Target max 500 frames (was 1000)
-        
-        // Adaptively increase chunk size based on compression ratio
-        let optimal_chunk_size = if compression_ratio < 1.2 {
-            // Poor compression: use very large chunks to minimize frames
-            // For ~1.04x compression, use 128KB chunks to get ~26KB per frame * 124 frames = ~3GB max
-            std::cmp::max(128 * 1024, ((encoded_size + (max_frames - 1)) / max_frames) as usize)
-        } else if compression_ratio < 2.0 {
-            // Moderate compression: use 32KB chunks
-            std::cmp::max(32 * 1024, ((encoded_size + (max_frames - 1)) / max_frames) as usize)
-        } else {
-            // Good compression: use 4KB chunks (default)
-            std::cmp::max(self.config.chunk_size as u64, ((encoded_size + (max_frames - 1)) / max_frames) as u64) as usize
-        };
+        // Calculate optimal chunk size to limit frame count
+        let max_frames = 1000;
+        let optimal_chunk_size = std::cmp::max(
+            self.config.chunk_size as u64,
+            ((encoded_size + (max_frames - 1)) / max_frames) as u64,
+        ) as usize;
         
         if optimal_chunk_size > self.config.chunk_size {
-            info!("📊 Adaptive chunking: compression was {:.2}x, using {} byte chunks instead of {} (reduces {} frames to {})",
-                compression_ratio,
-                optimal_chunk_size,
+            info!("📊 Automatically adjusted chunk size: {} → {} bytes ({} frames)",
                 self.config.chunk_size,
-                (encoded_size + self.config.chunk_size as u64 - 1) / self.config.chunk_size as u64,
+                optimal_chunk_size,
                 (encoded_size + optimal_chunk_size as u64 - 1) / optimal_chunk_size as u64
             );
         }
 
+        let compression_ratio = file_size as f32 / encoded_size as f32;
         let num_frames = (encoded_size + optimal_chunk_size as u64 - 1) / optimal_chunk_size as u64;
 
         let info = EncodedFileInfo {

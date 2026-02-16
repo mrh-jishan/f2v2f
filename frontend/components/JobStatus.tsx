@@ -1,8 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useWebSocket } from '@/lib/useWebSocket';
-import { JobStatus } from '@/lib/api';
+import { getJobStatus, getDownloadUrl, JobStatus } from '@/lib/api';
 
 interface JobStatusComponentProps {
   jobId: string;
@@ -17,31 +16,44 @@ export default function JobStatusComponent({
   onError,
   onProgress,
 }: JobStatusComponentProps) {
-  const { activeJobs } = useWebSocket();
+  const [status, setStatus] = useState<JobStatus | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const jobStatus = activeJobs.find(job => job.job_id === jobId);
-    
-    if (jobStatus) {
-      // Call onProgress callback if provided
-      if (onProgress && (jobStatus.status === 'pending' || jobStatus.status === 'running')) {
-        onProgress(jobStatus.progress, jobStatus.status);
-      }
+    let mounted = true;
+    const interval = setInterval(async () => {
+      try {
+        const jobStatus = await getJobStatus(jobId);
+        if (mounted) {
+          setStatus(jobStatus);
+          
+          // Call onProgress callback if provided
+          if (onProgress && (jobStatus.status === 'pending' || jobStatus.status === 'running')) {
+            onProgress(jobStatus.progress, jobStatus.status);
+          }
 
-      if (jobStatus.status === 'completed') {
-        onComplete(jobStatus);
-        setLoading(false);
-      } else if (jobStatus.status === 'failed') {
-        onError(jobStatus.error || 'Job failed');
-        setLoading(false);
-      } else {
-        setLoading(true);
+          if (jobStatus.status === 'completed') {
+            onComplete(jobStatus);
+            setLoading(false);
+          } else if (jobStatus.status === 'failed') {
+            onError(jobStatus.error || 'Job failed');
+            setLoading(false);
+          }
+        }
+      } catch (error) {
+        if (mounted) {
+          const message = error instanceof Error ? error.message : 'Failed to fetch status';
+          onError(message);
+          setLoading(false);
+        }
       }
-    }
-  }, [jobId, activeJobs, onComplete, onError, onProgress]);
+    }, 500);
 
-  const status = activeJobs.find(job => job.job_id === jobId);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, [jobId, onComplete, onError, onProgress]);
 
   if (!status) {
     return (

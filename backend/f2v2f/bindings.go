@@ -8,7 +8,7 @@ package f2v2f
 
 int32_t f2v2f_init();
 void* f2v2f_encode_create(uint32_t width, uint32_t height, uint32_t fps, size_t chunk_size, bool use_compression, int32_t compression_level);
-int32_t f2v2f_encode_file(void* handle, const char* input_path, const char* output_path, uint64_t* encoded_size_out, void* progress_callback);
+int32_t f2v2f_encode_file(void* handle, const char* input_path, const char* output_path, uint64_t* encoded_size_out, size_t* chunk_size_out, void* progress_callback);
 void f2v2f_encode_free(void* handle);
 void* f2v2f_decode_create_with_params(uint32_t width, uint32_t height, size_t chunk_size, bool use_compression, uint64_t encoded_size);
 int32_t f2v2f_decode_file(void* handle, const char* input_path, const char* output_path, void* progress_callback);
@@ -45,6 +45,11 @@ type Encoder struct {
 	handle unsafe.Pointer
 }
 
+type EncodeResult struct {
+	EncodedSize uint64
+	ChunkSize   int
+}
+
 func NewEncoder(width, height, fps uint32, chunkSize int, useCompression bool, compressionLevel int) (*Encoder, error) {
 	handle := C.f2v2f_encode_create(
 		C.uint32_t(width),
@@ -60,18 +65,22 @@ func NewEncoder(width, height, fps uint32, chunkSize int, useCompression bool, c
 	return &Encoder{handle: handle}, nil
 }
 
-func (e *Encoder) Encode(inputPath, outputPath string) (uint64, error) {
+func (e *Encoder) Encode(inputPath, outputPath string) (*EncodeResult, error) {
 	cInput := C.CString(inputPath)
 	defer C.free(unsafe.Pointer(cInput))
 	cOutput := C.CString(outputPath)
 	defer C.free(unsafe.Pointer(cOutput))
 
 	var encodedSize C.uint64_t
-	res := C.f2v2f_encode_file(e.handle, cInput, cOutput, &encodedSize, nil)
+	var actualChunkSize C.size_t
+	res := C.f2v2f_encode_file(e.handle, cInput, cOutput, &encodedSize, &actualChunkSize, nil)
 	if res != 0 {
-		return 0, getLastError()
+		return nil, getLastError()
 	}
-	return uint64(encodedSize), nil
+	return &EncodeResult{
+		EncodedSize: uint64(encodedSize),
+		ChunkSize:   int(actualChunkSize),
+	}, nil
 }
 
 func (e *Encoder) Close() {

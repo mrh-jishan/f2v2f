@@ -155,6 +155,7 @@ pub extern "C" fn f2v2f_encode_create(
 /// - `handle` must be a valid pointer from `f2v2f_encode_create`
 /// - `input_path` and `output_path` must be valid null-terminated UTF-8 strings
 /// - `encoded_size_out` must be a valid pointer to u64 (nullable)
+/// - `chunk_size_out` must be a valid pointer to size_t (nullable) - returns ACTUAL chunk size used
 /// - `progress_callback` must be null (callbacks not yet supported)
 #[no_mangle]
 pub extern "C" fn f2v2f_encode_file(
@@ -162,6 +163,7 @@ pub extern "C" fn f2v2f_encode_file(
     input_path: *const c_char,
     output_path: *const c_char,
     encoded_size_out: *mut u64,
+    chunk_size_out: *mut usize,
     progress_callback: Option<ProgressCallback>,
 ) -> i32 {
     if handle.is_null() {
@@ -202,6 +204,14 @@ pub extern "C" fn f2v2f_encode_file(
         }
     }
 
+    // CRITICAL: Return the ACTUAL chunk size used (may be auto-adjusted)
+    // Decoder MUST use the same chunk size to extract data correctly
+    if !chunk_size_out.is_null() {
+        unsafe {
+            *chunk_size_out = info.chunk_size;
+        }
+    }
+
     // Call progress callback with encoding progress (not implemented)
     if let Some(_callback) = progress_callback {
         // Callbacks not yet supported in FFI layer
@@ -214,10 +224,9 @@ pub extern "C" fn f2v2f_encode_file(
         handle_ref.config.fps,
     );
 
-    match composer.compose_from_file_data_blocking_with_original(
+    match composer.compose_from_file_data_blocking(
         compressed_data,
         info.chunk_size,
-        info.original_file_size,  // Pass original file size for metadata
         output_path_str,
     ) {
         Ok(_) => {
@@ -269,11 +278,14 @@ pub extern "C" fn f2v2f_decode_create_with_params(
     width: u32,
     height: u32,
     chunk_size: usize,
+    _use_compression: bool,
+    encoded_size: u64,
 ) -> *mut DecodeHandle {
     let config = DecodeConfig {
         width,
         height,
         chunk_size,
+        encoded_data_size: if encoded_size > 0 { Some(encoded_size) } else { None },
         ..DecodeConfig::default()
     };
 
