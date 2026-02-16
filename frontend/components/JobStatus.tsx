@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { getJobStatus, getDownloadUrl, JobStatus } from '@/lib/api';
+import { useWebSocket } from '@/lib/useWebSocket';
 
 interface JobStatusComponentProps {
   jobId: string;
@@ -18,27 +19,18 @@ export default function JobStatusComponent({
 }: JobStatusComponentProps) {
   const [status, setStatus] = useState<JobStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const { activeJobs } = useWebSocket();
 
+  // Get initial status via API
   useEffect(() => {
     let mounted = true;
-    const interval = setInterval(async () => {
+    
+    const fetchInitial = async () => {
       try {
         const jobStatus = await getJobStatus(jobId);
         if (mounted) {
           setStatus(jobStatus);
-          
-          // Call onProgress callback if provided
-          if (onProgress && (jobStatus.status === 'pending' || jobStatus.status === 'running')) {
-            onProgress(jobStatus.progress, jobStatus.status);
-          }
-
-          if (jobStatus.status === 'completed') {
-            onComplete(jobStatus);
-            setLoading(false);
-          } else if (jobStatus.status === 'failed') {
-            onError(jobStatus.error || 'Job failed');
-            setLoading(false);
-          }
+          setLoading(false);
         }
       } catch (error) {
         if (mounted) {
@@ -47,13 +39,34 @@ export default function JobStatusComponent({
           setLoading(false);
         }
       }
-    }, 500);
+    };
+
+    fetchInitial();
 
     return () => {
       mounted = false;
-      clearInterval(interval);
     };
-  }, [jobId, onComplete, onError, onProgress]);
+  }, [jobId, onError]);
+
+  // Listen to WebSocket updates for this job
+  useEffect(() => {
+    const job = activeJobs.find(j => j.job_id === jobId);
+    if (job) {
+      setStatus(job);
+      setLoading(false);
+      
+      // Call onProgress callback if provided
+      if (onProgress && (job.status === 'pending' || job.status === 'running')) {
+        onProgress(job.progress, job.status);
+      }
+
+      if (job.status === 'completed') {
+        onComplete(job);
+      } else if (job.status === 'failed') {
+        onError(job.error || 'Job failed');
+      }
+    }
+  }, [activeJobs, jobId, onComplete, onError, onProgress]);
 
   if (!status) {
     return (
