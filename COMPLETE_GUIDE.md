@@ -89,7 +89,7 @@ The new Go backend is powered by **Fiber**.
 - `GET /api/status/:job_id` - Check progress
 - `GET /api/files` - List job history
 - `GET /api/download/:filename` - Download result
-- `GET /health` - Health check
+- `GET /api/health` - Health check
 
 ---
 

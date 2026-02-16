@@ -1,12 +1,10 @@
-use crate::error::{F2V2FError, Result, ErrorContext};
+use crate::error::{F2V2FError, Result};
 use crate::config::EncodeConfig;
-use crate::image_generator::GeometricArtGenerator;
 use sha2::{Sha256, Digest};
 use std::fs::File;
 use std::io::{Read, BufReader, Write};
 use std::path::Path;
-use indicatif::{ProgressBar, ProgressStyle};
-use tracing::{info, warn, debug};
+use tracing::info;
 use tempfile;
 
 /// Encodes a file into a video with artistic frames

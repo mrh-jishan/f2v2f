@@ -108,19 +108,19 @@ func main() {
 	app.Use(logger.New())
 	app.Use(cors.New())
 
-	app.Get("/health", func(c *fiber.Ctx) error {
+	api := app.Group("/api")
+	api.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "healthy", "engine": "golang"})
 	})
-
-	app.Get("/api/version", func(c *fiber.Ctx) error {
+	api.Get("/version", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"version": f2v2f.Version()})
 	})
 
-	app.Post("/api/encode", handleEncode)
-	app.Post("/api/decode", handleDecode)
-	app.Get("/api/status/:job_id", handleStatus)
-	app.Get("/api/download/:filename", handleDownload)
-	app.Get("/api/files", handleListFiles)
+	api.Post("/encode", handleEncode)
+	api.Post("/decode", handleDecode)
+	api.Get("/status/:job_id", handleStatus)
+	api.Get("/download/:filename", handleDownload)
+	api.Get("/files", handleListFiles)
 
 	log.Fatal(app.Listen(":5000"))
 }

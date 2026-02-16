@@ -1,11 +1,10 @@
-use crate::error::{F2V2FError, Result, ErrorContext};
+use crate::error::{F2V2FError, Result};
 use crate::config::DecodeConfig;
 use sha2::{Sha256, Digest};
 use std::fs::File;
-use std::io::{Write, BufWriter, Read, BufReader};
+use std::io::{Write, Read, BufReader};
 use std::path::Path;
-use indicatif::{ProgressBar, ProgressStyle};
-use tracing::{info, warn, debug};
+use tracing::info;
 use tempfile;
 
 /// Decodes a video back to the original file
@@ -46,7 +45,7 @@ impl Decoder {
             temp_file.as_file_mut().flush()?;
             
             // Re-open for reading
-            let mut temp_reader = BufReader::new(File::open(temp_file.path())?);
+            let temp_reader = BufReader::new(File::open(temp_file.path())?);
             
             let mut final_output = File::create(output_path)?;
             let mut hasher = Sha256::new();
@@ -154,13 +153,13 @@ impl Decoder {
         Ok((total_bytes_written, checksum))
     }
 
-    fn check_operation_health(&self, frame_number: u64) -> Result<()> {
-        // Check for memory pressure, cancellation signals, etc.
-        if frame_number % 100 == 0 {
-            debug!("Health check at frame {}", frame_number);
-        }
-        Ok(())
-    }
+    // fn check_operation_health(&self, frame_number: u64) -> Result<()> {
+    //     // Check for memory pressure, cancellation signals, etc.
+    //     if frame_number % 100 == 0 {
+    //         debug!("Health check at frame {}", frame_number);
+    //     }
+    //     Ok(())
+    // }
 
     /// Verify that decoded file matches original checksum
     pub fn verify_checksum<P: AsRef<Path>>(

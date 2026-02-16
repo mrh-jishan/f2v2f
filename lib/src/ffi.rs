@@ -6,7 +6,6 @@
 use crate::config::{EncodeConfig, DecodeConfig};
 use crate::encoder::Encoder;
 use crate::decoder::Decoder;
-use crate::video_composer::VideoComposer;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::sync::Mutex;
@@ -31,7 +30,6 @@ fn clear_last_error() {
 /// Opaque handle for ongoing encode operations
 pub struct EncodeHandle {
     encoder: Encoder,
-    config: EncodeConfig,
 }
 
 /// Opaque handle for ongoing decode operations
@@ -144,7 +142,7 @@ pub extern "C" fn f2v2f_encode_create(
 
     match Encoder::new(config.clone()) {
         Ok(encoder) => {
-            let handle = Box::new(EncodeHandle { encoder, config });
+            let handle = Box::new(EncodeHandle { encoder });
             Box::into_raw(handle)
         }
         Err(_) => std::ptr::null_mut(),

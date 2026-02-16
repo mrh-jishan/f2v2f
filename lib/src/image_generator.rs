@@ -1,6 +1,5 @@
 use image::{ImageBuffer, Rgba};
 use crate::error::Result;
-use rand::Rng;
 
 /// Generates beautiful geometric artwork
 pub struct GeometricArtGenerator {
@@ -17,7 +16,6 @@ impl GeometricArtGenerator {
     /// Generate a geometric pattern image
     pub fn generate(&self) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>> {
         let mut img = ImageBuffer::new(self.width, self.height);
-        let mut _rng = rand::thread_rng();
 
         // Base color
         let base_hue = ((self.seed as f32) % 360.0) as f32;
@@ -99,27 +97,6 @@ impl GeometricArtGenerator {
         Rgba([v, v, v, 255])
     }
 
-    fn hsl_to_rgb(&self, h: f32, s: f32, l: f32) -> (u8, u8, u8) {
-        let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
-        let h_prime = h / 60.0;
-        let x = c * (1.0 - ((h_prime % 2.0 - 1.0).abs()));
-
-        let (r1, g1, b1) = match h_prime as i32 {
-            0 => (c, x, 0.0),
-            1 => (x, c, 0.0),
-            2 => (0.0, c, x),
-            3 => (0.0, x, c),
-            4 => (x, 0.0, c),
-            _ => (c, 0.0, x),
-        };
-
-        let m = l - c / 2.0;
-        let r = ((r1 + m) * 255.0).round() as u8;
-        let g = ((g1 + m) * 255.0).round() as u8;
-        let b = ((b1 + m) * 255.0).round() as u8;
-
-        (r, g, b)
-    }
 
     /// Decode data from an image
     pub fn decode_from_image(&self, img: &ImageBuffer<Rgba<u8>, Vec<u8>>, chunk_size: usize) -> Result<Vec<u8>> {
