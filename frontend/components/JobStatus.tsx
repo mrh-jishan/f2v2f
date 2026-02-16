@@ -9,6 +9,7 @@ interface JobStatusComponentProps {
   onComplete: (result: JobStatus) => void;
   onError: (error: string) => void;
   onProgress?: (progress: number, status: string) => void;
+  wsData?: JobStatus;
 }
 
 export default function JobStatusComponent({
@@ -16,10 +17,31 @@ export default function JobStatusComponent({
   onComplete,
   onError,
   onProgress,
+  wsData,
 }: JobStatusComponentProps) {
   const [status, setStatus] = useState<JobStatus | null>(null);
 
+  // Sync with wsData if provided
   useEffect(() => {
+    if (wsData) {
+      setStatus(wsData);
+
+      if (onProgress && (wsData.status === 'pending' || wsData.status === 'running')) {
+        onProgress(wsData.progress, wsData.status);
+      }
+
+      if (wsData.status === 'completed') {
+        onComplete(wsData);
+      } else if (wsData.status === 'failed') {
+        onError(wsData.error || 'Job failed');
+      }
+    }
+  }, [wsData, onComplete, onError, onProgress]);
+
+  useEffect(() => {
+    // Only poll if wsData is NOT available
+    if (wsData) return;
+
     let mounted = true;
     const interval = setInterval(async () => {
       try {

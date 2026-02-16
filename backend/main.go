@@ -2,15 +2,18 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/gofiber/websocket/v2"
 	"github.com/google/uuid"
 	_ "modernc.org/sqlite"
 
@@ -62,9 +65,30 @@ type FileRecord struct {
 }
 
 var (
-	jobs = make(map[string]*Job)
-	db   *sql.DB
+	jobs      = make(map[string]*Job)
+	jobsMu    sync.RWMutex
+	db        *sql.DB
+	clients   = make(map[*websocket.Conn]bool)
+	clientsMu sync.Mutex
 )
+
+func broadcastJob(job *Job) {
+	data, _ := json.Marshal(job)
+	clientsMu.Lock()
+	defer clientsMu.Unlock()
+	for client := range clients {
+		// Using a goroutine here to prevent one slow client from blocking others
+		go func(c *websocket.Conn, msg []byte) {
+			if err := c.WriteMessage(websocket.TextMessage, msg); err != nil {
+				log.Printf("websocket error: %v", err)
+				c.Close()
+				clientsMu.Lock()
+				delete(clients, c)
+				clientsMu.Unlock()
+			}
+		}(client, data)
+	}
+}
 
 func init() {
 	os.MkdirAll(UploadDir, 0755)
@@ -116,6 +140,45 @@ func main() {
 		return c.JSON(fiber.Map{"version": f2v2f.Version()})
 	})
 
+	api.Get("/ws", websocket.New(func(c *websocket.Conn) {
+		log.Printf("new ws connection from %s", c.RemoteAddr())
+		clientsMu.Lock()
+		clients[c] = true
+		clientsMu.Unlock()
+
+		defer func() {
+			log.Printf("ws connection closed for %s", c.RemoteAddr())
+			clientsMu.Lock()
+			delete(clients, c)
+			clientsMu.Unlock()
+			c.Close()
+		}()
+
+		// On connection, send all active jobs
+		jobsMu.RLock()
+		activeCount := 0
+		for _, job := range jobs {
+			if job.Status == StatusPending || job.Status == StatusRunning {
+				data, _ := json.Marshal(job)
+				if err := c.WriteMessage(websocket.TextMessage, data); err != nil {
+					log.Printf("initial ws send error: %v", err)
+				}
+				activeCount++
+			}
+		}
+		jobsMu.RUnlock()
+		log.Printf("sent %d active jobs to new ws client", activeCount)
+
+		for {
+			mt, msg, err := c.ReadMessage()
+			if err != nil {
+				log.Printf("ws read error: %v", err)
+				break
+			}
+			log.Printf("ws recv: %s (type %d)", string(msg), mt)
+		}
+	}))
+
 	api.Post("/encode", handleEncode)
 	api.Post("/decode", handleDecode)
 	api.Get("/status/:job_id", handleStatus)
@@ -155,10 +218,14 @@ func handleEncode(c *fiber.Ctx) error {
 		Status:           StatusPending,
 		OriginalFilename: file.Filename,
 	}
+	jobsMu.Lock()
 	jobs[jobID] = job
+	jobsMu.Unlock()
+	broadcastJob(job)
 
 	go func() {
 		job.Status = StatusRunning
+		broadcastJob(job)
 
 		// Parse params (ignoring errors for brevity, uses defaults)
 		w := uint32(1920)
@@ -176,6 +243,7 @@ func handleEncode(c *fiber.Ctx) error {
 		if err != nil {
 			job.Status = StatusFailed
 			job.ErrorMessage = err.Error()
+			broadcastJob(job)
 			return
 		}
 		defer encoder.Close()
@@ -184,6 +252,7 @@ func handleEncode(c *fiber.Ctx) error {
 		if err != nil {
 			job.Status = StatusFailed
 			job.ErrorMessage = err.Error()
+			broadcastJob(job)
 			return
 		}
 
@@ -191,6 +260,8 @@ func handleEncode(c *fiber.Ctx) error {
 		job.Progress = 100
 		job.ResultURL = fmt.Sprintf("/api/download/%s", outputName)
 		job.EncodedDataSize = encodedSize
+		broadcastJob(job)
+
 		// Record in DB
 		stat, _ := os.Stat(outputPath)
 		_, _ = db.Exec(`
@@ -258,15 +329,20 @@ func handleDecode(c *fiber.Ctx) error {
 		Status:           StatusPending,
 		OriginalFilename: file.Filename,
 	}
+	jobsMu.Lock()
 	jobs[jobID] = job
+	jobsMu.Unlock()
+	broadcastJob(job)
 
 	go func() {
 		job.Status = StatusRunning
+		broadcastJob(job)
 
 		decoder, err := f2v2f.NewDecoder(1920, 1080, chunkSize, useCompression, encodedDataSize)
 		if err != nil {
 			job.Status = StatusFailed
 			job.ErrorMessage = err.Error()
+			broadcastJob(job)
 			return
 		}
 		defer decoder.Close()
@@ -274,12 +350,14 @@ func handleDecode(c *fiber.Ctx) error {
 		if err := decoder.Decode(inputPath, outputPath); err != nil {
 			job.Status = StatusFailed
 			job.ErrorMessage = err.Error()
+			broadcastJob(job)
 			return
 		}
 
 		job.Status = StatusCompleted
 		job.Progress = 100
 		job.ResultURL = fmt.Sprintf("/api/download/%s", outputName)
+		broadcastJob(job)
 
 		stat, _ := os.Stat(outputPath)
 		_, _ = db.Exec(`
@@ -299,7 +377,9 @@ func handleDecode(c *fiber.Ctx) error {
 
 func handleStatus(c *fiber.Ctx) error {
 	jobID := c.Params("job_id")
+	jobsMu.RLock()
 	job, ok := jobs[jobID]
+	jobsMu.RUnlock()
 	if !ok {
 		return c.Status(404).JSON(fiber.Map{"error": "Job not found"})
 	}
@@ -316,7 +396,19 @@ func handleDownload(c *fiber.Ctx) error {
 }
 
 func handleListFiles(c *fiber.Ctx) error {
-	rows, err := db.Query("SELECT * FROM files ORDER BY created_at DESC")
+	opType := c.Query("type") // "encoded" or "original"
+	query := "SELECT * FROM files"
+	var rows *sql.Rows
+	var err error
+
+	if opType != "" {
+		query += " WHERE type = ? ORDER BY created_at DESC"
+		rows, err = db.Query(query, opType)
+	} else {
+		query += " ORDER BY created_at DESC"
+		rows, err = db.Query(query)
+	}
+
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
