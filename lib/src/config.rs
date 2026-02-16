@@ -89,9 +89,14 @@ impl EncodeConfig {
     }
 }
 
-/// Configuration for decoding operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecodeConfig {
+    /// Resolution width
+    pub width: u32,
+    /// Resolution height
+    pub height: u32,
+    /// Chunk size in bytes
+    pub chunk_size: usize,
     /// Number of worker threads
     pub num_threads: usize,
     /// Buffer size for processing
@@ -103,6 +108,9 @@ pub struct DecodeConfig {
 impl Default for DecodeConfig {
     fn default() -> Self {
         Self {
+            width: 1920,
+            height: 1080,
+            chunk_size: 4096,
             num_threads: num_cpus::get(),
             buffer_size: 1024 * 1024, // 1MB
             verify_checksum: true,

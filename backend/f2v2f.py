@@ -84,6 +84,13 @@ _lib.f2v2f_encode_free.restype = None
 _lib.f2v2f_decode_create.argtypes = []
 _lib.f2v2f_decode_create.restype = ctypes.c_void_p
 
+_lib.f2v2f_decode_create_with_params.argtypes = [
+    ctypes.c_uint32,  # width
+    ctypes.c_uint32,  # height
+    ctypes.c_size_t,  # chunk_size
+]
+_lib.f2v2f_decode_create_with_params.restype = ctypes.c_void_p
+
 _lib.f2v2f_decode_file.argtypes = [
     ctypes.c_void_p,  # handle
     ctypes.c_char_p,  # input_path
@@ -252,14 +259,28 @@ class Decoder:
         decoder.decode("output.mp4", "recovered.pdf")
     """
     
-    def __init__(self):
-        """Create a decoder"""
+    def __init__(self, width: int = 1920, height: int = 1080, chunk_size: int = 4096):
+        """
+        Create a decoder
+        
+        Args:
+            width: Expected video width
+            height: Expected video height
+            chunk_size: Data chunk size used during encoding
+        """
+        self.width = width
+        self.height = height
+        self.chunk_size = chunk_size
         self._handle = None
     
     def _create_handle(self) -> None:
         """Create the decoder handle"""
         if self._handle is None:
-            self._handle = _lib.f2v2f_decode_create()
+            self._handle = _lib.f2v2f_decode_create_with_params(
+                ctypes.c_uint32(self.width),
+                ctypes.c_uint32(self.height),
+                ctypes.c_size_t(self.chunk_size),
+            )
             if self._handle is None:
                 raise ConfigError("Failed to create decoder")
     

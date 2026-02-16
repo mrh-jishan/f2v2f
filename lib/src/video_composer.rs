@@ -3,7 +3,7 @@ use crate::image_generator::GeometricArtGenerator;
 use image::ImageBuffer;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::io::Write;
+use std::io::{Read, Write};
 use tracing::{info, warn, debug};
 
 /// Composes individual image frames into a video
@@ -19,65 +19,32 @@ impl VideoComposer {
     }
 
     fn ffmpeg_encode(
-        frame_data: &[Vec<u8>],
         width: u32,
         height: u32,
         fps: u32,
         output_path: &str,
-    ) -> Result<()> {
-        // Combine all frame data into a single bytearray for communicate()
-        let mut all_data = Vec::new();
-        for frame in frame_data {
-            all_data.extend_from_slice(frame);
-        }
-
-        let mut cmd = Command::new("ffmpeg")
+    ) -> Result<std::process::Child> {
+        let cmd = Command::new("/usr/local/bin/ffmpeg")
             .args(&[
                 "-y",  // Overwrite
                 "-f", "rawvideo",
-                "-pix_fmt", "rgb24",
+                "-pix_fmt", "rgba",
                 "-video_size", &format!("{}x{}", width, height),
                 "-framerate", &fps.to_string(),
                 "-i", "pipe:0",
                 "-c:v", "libx264",
-                "-preset", "fast",
+                "-preset", "ultrafast",
                 "-pix_fmt", "yuv420p",
-                "-profile:v", "baseline",
-                "-level", "3.0",
                 "-movflags", "+faststart",
                 output_path,
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(std::fs::File::create("ffmpeg_error.log").map_err(|e| F2V2FError::EncodingError(format!("Failed to create log file: {}", e)))?)
             .spawn()
             .map_err(|e| F2V2FError::EncodingError(format!("Failed to start ffmpeg: {}", e)))?;
 
-        info!("FFmpeg started, writing {} bytes to pipe", all_data.len());
-
-        // Write all data at once then wait
-        {
-            let mut stdin = cmd.stdin.take()
-                .ok_or_else(|| F2V2FError::EncodingError("No stdin".to_string()))?;
-            
-            stdin.write_all(&all_data)
-                .map_err(|e| F2V2FError::EncodingError(format!("Write failed: {}", e)))?;
-            
-            info!("Successfully wrote {} bytes to FFmpeg stdin", all_data.len());
-        }
-
-        info!("Waiting for FFmpeg to finish...");
-        let status = cmd.wait()
-            .map_err(|e| F2V2FError::EncodingError(format!("Wait failed: {}", e)))?;
-
-        if !status.success() {
-            return Err(F2V2FError::EncodingError(
-                format!("ffmpeg exited with code {}", status.code().unwrap_or(-1))
-            ));
-        }
-
-        info!("FFmpeg completed successfully");
-        Ok(())
+        Ok(cmd)
     }
    
     /// Create video from sequence of frames
@@ -95,7 +62,26 @@ impl VideoComposer {
             output.display()
         );
 
-        Self::ffmpeg_encode(&frame_data, self.width, self.height, self.fps, &output.to_string_lossy())
+        let mut child = Self::ffmpeg_encode(self.width, self.height, self.fps, &output.to_string_lossy())?;
+        let mut stdin = child.stdin.take().ok_or_else(|| F2V2FError::EncodingError("No stdin".to_string()))?;
+
+        for frame in frame_data {
+            stdin.write_all(&frame)
+                .map_err(|e| F2V2FError::EncodingError(format!("Write failed: {}", e)))?;
+        }
+        
+        drop(stdin);
+
+        let status = child.wait()
+            .map_err(|e| F2V2FError::EncodingError(format!("Wait failed: {}", e)))?;
+
+        if !status.success() {
+            return Err(F2V2FError::EncodingError(
+                format!("ffmpeg exited with code {}", status.code().unwrap_or(-1))
+            ));
+        }
+
+        Ok(())
     }
 
     /// Create video from geometric art frames based on file data
@@ -105,25 +91,38 @@ impl VideoComposer {
         chunk_size: usize,
         output_path: P,
     ) -> Result<()> {
-        info!("Creating video from file data");
+        let output = output_path.as_ref();
+        info!("Creating video from file data to {}", output.display());
 
         let num_chunks = (file_data.len() + chunk_size - 1) / chunk_size;
         let generator = GeometricArtGenerator::new(self.width, self.height, 42);
 
-        let mut frames = Vec::new();
+        let mut child = Self::ffmpeg_encode(self.width, self.height, self.fps, &output.to_string_lossy())?;
+        let mut stdin = child.stdin.take().ok_or_else(|| F2V2FError::EncodingError("No stdin".to_string()))?;
 
         for (i, chunk) in file_data.chunks(chunk_size).enumerate() {
-            debug!("Generating frame {}/{}", i + 1, num_chunks);
+            debug!("Generating and writing frame {}/{}", i + 1, num_chunks);
 
             let img = generator.generate_from_data(chunk)?;
-            
-            // Convert image to raw bytes for video composition
             let frame_bytes = img.into_raw();
-            frames.push(frame_bytes);
+            
+            stdin.write_all(&frame_bytes)
+                .map_err(|e| F2V2FError::EncodingError(format!("Write failed at frame {}: {}", i + 1, e)))?;
+        }
+        
+        drop(stdin);
+
+        let status = child.wait()
+            .map_err(|e| F2V2FError::EncodingError(format!("Wait failed: {}", e)))?;
+
+        if !status.success() {
+            return Err(F2V2FError::EncodingError(
+                format!("ffmpeg exited with code {}", status.code().unwrap_or(-1))
+            ));
         }
 
-        // Call sync compose from async context
-        self.compose_from_frames(frames, output_path)
+        info!("Video composition complete");
+        Ok(())
     }
 
     /// Extract frames from video
@@ -134,11 +133,45 @@ impl VideoComposer {
         let path = video_path.as_ref();
         info!("Extracting frames from: {}", path.display());
 
-        // This would use ffmpeg to extract frames
-        // For now, placeholder
-        warn!("Frame extraction not yet fully implemented");
+        let mut child = Command::new("/usr/local/bin/ffmpeg")
+            .args(&[
+                "-i", &path.to_string_lossy(),
+                "-f", "rawvideo",
+                "-pix_fmt", "rgba",
+                "-",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| F2V2FError::DecodingError(format!("Failed to start ffmpeg: {}", e)))?;
 
-        Ok(Vec::new())
+        let mut stdout = child.stdout.take().ok_or_else(|| F2V2FError::DecodingError("No stdout".to_string()))?;
+        let mut frames = Vec::new();
+        let frame_size = (self.width * self.height * 4) as usize;
+        
+        loop {
+            let mut buffer = vec![0u8; frame_size];
+            match stdout.read_exact(&mut buffer) {
+                Ok(_) => {
+                    let img = ImageBuffer::from_raw(self.width, self.height, buffer)
+                        .ok_or_else(|| F2V2FError::DecodingError("Failed to create image from raw bytes".to_string()))?;
+                    frames.push(img);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(e) => return Err(F2V2FError::DecodingError(format!("Read failed: {}", e))),
+            }
+        }
+
+        let status = child.wait()
+            .map_err(|e| F2V2FError::DecodingError(format!("Wait failed: {}", e)))?;
+
+        if !status.success() {
+            // It might fail if we read all frames but ffmpeg has more to say, or if it's not a video
+            warn!("ffmpeg exited with code {}", status.code().unwrap_or(-1));
+        }
+
+        info!("Extracted {} frames", frames.len());
+        Ok(frames)
     }
 }
 
@@ -192,9 +225,18 @@ mod tests {
     }
 
     #[test]
-    fn test_video_validator() -> Result<()> {
-        // Would test with actual video file
-        // For now, just validate the logic compiles
+    fn test_compose_from_frames() -> Result<()> {
+        let composer = VideoComposer::new(256, 256, 30);
+        let output = Path::new("/tmp/test_compose.mp4");
+        
+        let frame = vec![0u8; 256 * 256 * 4]; // Black frame
+        let frames = vec![frame.clone(), frame];
+        
+        composer.compose_from_frames(frames, output)?;
+        assert!(output.exists());
+        assert!(output.metadata()?.len() > 0);
+        
+        std::fs::remove_file(output)?;
         Ok(())
     }
 }

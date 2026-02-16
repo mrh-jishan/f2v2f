@@ -21,15 +21,6 @@ from datetime import datetime
 import hashlib
 import sqlite3
 
-# Set up library paths for FFmpeg and Rust
-ffmpeg_lib = "/usr/local/opt/ffmpeg@7/lib"
-if ffmpeg_lib not in os.environ.get("DYLD_LIBRARY_PATH", ""):
-    os.environ["DYLD_LIBRARY_PATH"] = f"{ffmpeg_lib}:" + os.environ.get("DYLD_LIBRARY_PATH", "")
-
-rust_lib = str(Path(__file__).parent.parent / "lib" / "target" / "release")
-if rust_lib not in os.environ.get("DYLD_LIBRARY_PATH", ""):
-    os.environ["DYLD_LIBRARY_PATH"] = f"{rust_lib}:" + os.environ.get("DYLD_LIBRARY_PATH", "")
-
 # Import f2v2f bindings
 from f2v2f import Encoder, Decoder, F2V2FError
 
@@ -123,7 +114,8 @@ def init_db():
             created_at TEXT NOT NULL,
             video_url TEXT,
             original_file TEXT,
-            checksum TEXT
+            checksum TEXT,
+            chunk_size INTEGER
         )
     ''')
     
@@ -157,33 +149,38 @@ def get_all_files() -> List[FileRecord]:
             created_at=row['created_at'],
             video_url=row['video_url'],
             original_file=row['original_file'],
-            checksum=row['checksum']
+            checksum=row['checksum'],
+            chunk_size=row['chunk_size']
         )
         for row in rows
     ]
 
 
-def add_file_record(filename: str, file_type: str, size: int, video_url: Optional[str] = None):
+def add_file_record(filename: str, file_type: str, size: int, video_url: Optional[str] = None, 
+                   original_file: Optional[str] = None, checksum: Optional[str] = None,
+                   chunk_size: Optional[int] = None):
     """Add a file to the database"""
-    record = FileRecord(
-        id=str(uuid.uuid4()),
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    file_id = str(uuid.uuid4())
+    created_at = datetime.now().isoformat()
+    
+    cursor.execute('''
+        INSERT INTO files (id, name, type, size, created_at, video_url, original_file, checksum, chunk_size)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (file_id, filename, file_type, size, created_at, video_url, original_file, checksum, chunk_size))
+    conn.commit()
+    conn.close()
+    
+    logger.info(f"Added file record: {filename}")
+    return FileRecord(
+        id=file_id,
         name=filename,
         type=file_type,
         size=size,
-        created_at=datetime.now().isoformat(),
+        created_at=created_at,
         video_url=video_url,
-        checksum=None,
-    )
-    
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute('''
-        INSERT INTO files (id, name, type, size, created_at, video_url, original_file, checksum)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        record.id,
-        record.name,
-        record.type,
         record.size,
         record.created_at,
         record.video_url,
@@ -259,32 +256,9 @@ def encode_file():
         input_path = Path(app.config["UPLOAD_FOLDER"]) / unique_name
         file.save(input_path)
         
-        # Try to find original filename from database by looking up the video
-        original_filename = None
-        try:
-            # Extract the actual MP4 filename without UUID prefix
-            video_filename = filename
-            conn = get_db()
-            cursor = conn.cursor()
-            cursor.execute('SELECT original_file FROM files WHERE video_url LIKE ? ORDER BY created_at DESC LIMIT 1', 
-                          (f"%{video_filename}",))
-            row = cursor.fetchone()
-            if row and row['original_file']:
-                original_filename = row['original_file']
-                logger.info(f"Found original filename: {original_filename}")
-            conn.close()
-        except Exception as e:
-            logger.warning(f"Could not look up original filename: {e}")
-        
-        # Determine output filename - preserve extension
-        if original_filename:
-            # Use original filename with new UUID
-            base_name = Path(original_filename).stem
-            extension = Path(original_filename).suffix
-            output_name = f"{uuid.uuid4()}_{base_name}{extension}"
-        else:
-            # Fallback to generic name
-            output_name = f"{uuid.uuid4()}_decoded.bin"
+        # Determine output filename - Encode always results in MP4
+        base_name = Path(filename).stem
+        output_name = f"{uuid.uuid4()}_{base_name}.mp4"
         output_path = Path(app.config["OUTPUT_FOLDER"]) / output_name
         
         # Ensure output directory exists
@@ -662,4 +636,4 @@ init_db()
 
 if __name__ == "__main__":
     # Disable auto-reload in debug mode to prevent Tokio runtime issues
-    app.run(debug=True, use_reloader=False, host="0.0.0.0", port=5000)
+    app.run(debug=True, use_reloader=False, host="0.0.0.0", port=5001)

@@ -33,19 +33,12 @@ impl Decoder {
 
         info!("Starting file decoding: {}", input_path.display());
 
-        // Get input file size
-        let input_size = std::fs::metadata(input_path)?.len();
-        info!("Input video size: {} bytes ({:.2} MB)", input_size, input_size as f64 / 1024.0 / 1024.0);
-
-        // Open input for reading
-        let input_file = File::open(input_path)?;
-        
         // Open output for writing
         let output_file = File::create(output_path)?;
         let mut writer = BufWriter::new(output_file);
 
         let (extracted_size, checksum) = self
-            .process_video(input_file, &mut writer, input_size)
+            .process_video(input_path, &mut writer)
             .await?;
 
         writer.flush()?;
@@ -60,52 +53,45 @@ impl Decoder {
         })
     }
 
-    async fn process_video<R: std::io::Read, W: Write>(
+    async fn process_video<W: Write>(
         &self,
-        mut reader: R,
+        video_path: &Path,
         writer: &mut W,
-        file_size: u64,
     ) -> Result<(u64, String)> {
         let mut hasher = Sha256::new();
         let mut total_bytes_written: u64 = 0;
-        let mut buffer = vec![0u8; 65536]; // 64KB chunks
 
-        let progress = ProgressBar::new(file_size);
+        let composer = crate::video_composer::VideoComposer::new(
+            self.config.width,
+            self.config.height,
+            30, // FPS doesn't matter much for decoding
+        );
+
+        let frames = composer.extract_frames(video_path).await?;
+        let generator = crate::image_generator::GeometricArtGenerator::new(
+            self.config.width,
+            self.config.height,
+            42, // Should ideally match the encoding seed
+        );
+
+        let progress = ProgressBar::new(frames.len() as u64);
         progress.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} frames ({eta})")
                 .unwrap_or_else(|_| ProgressStyle::default_bar())
                 .progress_chars("#>-"),
         );
 
-        let mut frame_number = 0;
-
-        loop {
-            match reader.read(&mut buffer) {
-                Ok(0) => break, // EOF
-                Ok(n) => {
-                    let chunk = &buffer[..n];
-
-                    // Update progress
-                    progress.inc(n as u64);
-                    debug!("Frame {}: extracted {} bytes", frame_number, n);
-
-                    // Update hash
-                    hasher.update(chunk);
-
-                    // Write to output
-                    writer.write_all(chunk)?;
-                    total_bytes_written += n as u64;
-
-                    frame_number += 1;
-
-                    // Check operation health
-                    self.check_operation_health(frame_number)?;
-                }
-                Err(e) => {
-                    return Err(F2V2FError::Io(e.to_string()).into());
-                }
-            }
+        for (_i, frame) in frames.iter().enumerate() {
+            let data = generator.decode_from_image(frame, self.config.chunk_size)?;
+            
+            // Note: Currently we don't know the exact end of data if it's not a full chunk
+            // For now we write the whole chunk. A better implementation would store the length.
+            hasher.update(&data);
+            writer.write_all(&data)?;
+            total_bytes_written += data.len() as u64;
+            
+            progress.inc(1);
         }
 
         progress.finish_with_message("Decoding complete!");

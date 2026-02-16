@@ -124,6 +124,62 @@ impl GeometricArtGenerator {
         (r, g, b)
     }
 
+    /// Decode data from an image
+    pub fn decode_from_image(&self, img: &ImageBuffer<Rgba<u8>, Vec<u8>>, chunk_size: usize) -> Result<Vec<u8>> {
+        let mut data = vec![0u8; chunk_size];
+        let mut accumulations = vec![0.0f32; chunk_size];
+        let mut counts = vec![0u32; chunk_size];
+
+        let base_hue = self.bytes_to_seed(&[0]); // This is a bit arbitrary, should ideally match what was used
+
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let pixel = img.get_pixel(x, y);
+                let fx = x as f32 / self.width as f32;
+                let fy = y as f32 / self.height as f32;
+                let pixel_idx = ((y * self.width + x) as usize) % chunk_size;
+
+                // Reverse color to pattern
+                let pattern = self.color_to_pattern(pixel, base_hue);
+                
+                // Reverse pattern to data influence
+                let base_pattern = self.compute_pattern(fx, fy);
+                // pattern = base_pattern * 0.7 + data_influence * 0.3
+                let data_influence = (pattern - base_pattern * 0.7) / 0.3;
+                let data_byte = (data_influence * 255.0).max(0.0).min(255.0) as u8;
+
+                accumulations[pixel_idx] += data_byte as f32;
+                counts[pixel_idx] += 1;
+            }
+        }
+
+        for i in 0..chunk_size {
+            if counts[i] > 0 {
+                data[i] = (accumulations[i] / counts[i] as f32).round() as u8;
+            }
+        }
+
+        Ok(data)
+    }
+
+    fn color_to_pattern(&self, color: &Rgba<u8>, _base_hue: f32) -> f32 {
+        // This is a simplified reversal of pattern_to_color
+        // Since pattern_to_color uses lightness predominantly based on pattern
+        let r = color[0] as f32 / 255.0;
+        let g = color[1] as f32 / 255.0;
+        let b = color[2] as f32 / 255.0;
+
+        let max = r.max(g).max(b);
+        let min = r.min(g).min(b);
+        let lightness = (max + min) / 2.0;
+
+        // lightness = normalized * 0.7 + 0.15
+        let normalized = (lightness - 0.15) / 0.7;
+        
+        // normalized = (pattern + 1.0) / 2.0
+        normalized * 2.0 - 1.0
+    }
+
     fn bytes_to_seed(&self, data: &[u8]) -> f32 {
         let sum: u32 = data.iter().map(|&b| b as u32).sum();
         ((sum as f32) % 360.0) as f32

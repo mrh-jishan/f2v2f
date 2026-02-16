@@ -251,6 +251,33 @@ pub extern "C" fn f2v2f_decode_create() -> *mut DecodeHandle {
     }
 }
 
+/// Create a decoding context with parameters
+#[no_mangle]
+pub extern "C" fn f2v2f_decode_create_with_params(
+    width: u32,
+    height: u32,
+    chunk_size: usize,
+) -> *mut DecodeHandle {
+    let config = DecodeConfig {
+        width,
+        height,
+        chunk_size,
+        ..DecodeConfig::default()
+    };
+
+    if let Err(_) = config.validate() {
+        return std::ptr::null_mut();
+    }
+
+    match Decoder::new(config) {
+        Ok(decoder) => {
+            let handle = Box::new(DecodeHandle { decoder });
+            Box::into_raw(handle)
+        }
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
 /// Decode a video back to a file
 ///
 /// # Safety
