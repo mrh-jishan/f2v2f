@@ -30,21 +30,9 @@ impl Encoder {
         Ok(Self { config })
     }
 
-    /// Encode a file: read, compress (optional), and return data
+    /// Encode a file (BLOCKING, NO ASYNC) - Safe for FFI calls
     /// Returns (metadata, compressed_data)
-    /// 
-    /// **Optimization Strategy for TB-Scale:**
-    /// 1. Zstd compression (lossless) - reduces 1KB → ~50-100 bytes
-    /// 2. Chunk into frames - pack compressed data efficiently
-    /// 3. H.265 video encoding - 40-50% smaller than H.264
-    /// 4. Aggressive CRF 22 - maximize compression without losing geometric art detail
-    /// 
-    /// **Example:** 1GB file
-    /// - After Zstd: ~330MB (3:1 compression)
-    /// - Into frames: ~82 frames (@ 4KB chunks)
-    /// - Final video: ~50-80MB (H.265 with CRF 22)
-    /// - Total reduction: **1GB → 300MB compressed → 50-80MB video**
-    pub async fn encode<P: AsRef<Path>>(&self, input: P) -> Result<(EncodedFileInfo, Vec<u8>)> {
+    pub fn encode_blocking<P: AsRef<Path>>(&self, input: P) -> Result<(EncodedFileInfo, Vec<u8>)> {
         let input_path = input.as_ref();
         let file_size = std::fs::metadata(input_path)?.len();
         
@@ -63,20 +51,18 @@ impl Encoder {
         hasher.update(&file_data);
         let checksum = format!("{:x}", hasher.finalize());
 
-        // Compress if enabled - enables optimal data density per frame
+        // Compress if enabled
         let encoded_data = if self.config.use_compression {
             info!("🗜️  Compressing with Zstd (compression_level={})", self.config.compression_level);
             let mut encoder = ZstdEncoder::new(Vec::new(), self.config.compression_level)?;
             encoder.multithread(num_cpus::get() as u32)?;
             encoder.write_all(&file_data)?;
             let compressed = encoder.finish()?;
-            
-            let ratio = file_size as f32 / compressed.len() as f32;
             info!(
-                "✅ Compression: {} bytes → {} bytes ({:.2}x reduction)",
+                "✅ Compression: {} bytes → {} bytes ({:.2}x ratio)", 
                 file_size, 
                 compressed.len(),
-                ratio
+                (file_size as f32 / compressed.len() as f32)
             );
             compressed
         } else {
@@ -86,22 +72,62 @@ impl Encoder {
 
         let encoded_size = encoded_data.len() as u64;
         let compression_ratio = file_size as f32 / encoded_size as f32;
-        let num_frames = (encoded_size + self.config.chunk_size as u64 - 1) / self.config.chunk_size as u64;
+        
+        // Calculate optimal chunk size to limit frame count AND adapt to compression
+        // Key insight: If data doesn't compress well, use MUCH larger chunks to reduce frame count
+        // For example, if compression is poor (1.04x), we need bigger chunks
+        let max_frames = 500;  // Target max 500 frames (was 1000)
+        
+        // Adaptively increase chunk size based on compression ratio
+        let optimal_chunk_size = if compression_ratio < 1.2 {
+            // Poor compression: use very large chunks to minimize frames
+            // For ~1.04x compression, use 128KB chunks to get ~26KB per frame * 124 frames = ~3GB max
+            std::cmp::max(128 * 1024, ((encoded_size + (max_frames - 1)) / max_frames) as usize)
+        } else if compression_ratio < 2.0 {
+            // Moderate compression: use 32KB chunks
+            std::cmp::max(32 * 1024, ((encoded_size + (max_frames - 1)) / max_frames) as usize)
+        } else {
+            // Good compression: use 4KB chunks (default)
+            std::cmp::max(self.config.chunk_size as u64, ((encoded_size + (max_frames - 1)) / max_frames) as u64) as usize
+        };
+        
+        if optimal_chunk_size > self.config.chunk_size {
+            info!("📊 Adaptive chunking: compression was {:.2}x, using {} byte chunks instead of {} (reduces {} frames to {})",
+                compression_ratio,
+                optimal_chunk_size,
+                self.config.chunk_size,
+                (encoded_size + self.config.chunk_size as u64 - 1) / self.config.chunk_size as u64,
+                (encoded_size + optimal_chunk_size as u64 - 1) / optimal_chunk_size as u64
+            );
+        }
+
+        let num_frames = (encoded_size + optimal_chunk_size as u64 - 1) / optimal_chunk_size as u64;
 
         let info = EncodedFileInfo {
             original_file_size: file_size,
             checksum,
             num_frames,
-            chunk_size: self.config.chunk_size,
+            chunk_size: optimal_chunk_size,
             art_style: self.config.art_style.clone(),
             encoded_size,
             compression_ratio,
         };
 
-        info!("📊 Encoding complete: {} frames needed (compression ratio: {:.2}x)", 
-            num_frames, compression_ratio);
+        info!("📊 Encoding complete: {} frames needed (ratio: {:.2}x)", num_frames, compression_ratio);
 
         Ok((info, encoded_data))
+    }
+
+    /// Encode a file: read, compress (optional), and return data
+    /// Returns (metadata, compressed_data)
+    /// 
+    /// For large files, automatically adjusts chunk size to limit frame count:
+    /// - Target: Keep frames under ~1000 to avoid excessive memory usage
+    /// - Each frame requires 1920×1080×4 = 8.29MB raw data
+    /// - Max frames: 1000 = 8.2GB max memory per encoding
+    pub async fn encode<P: AsRef<Path>>(&self, input: P) -> Result<(EncodedFileInfo, Vec<u8>)> {
+        // Simply call the blocking version
+        self.encode_blocking(input)
     }
 
     /// Estimate the video file size based on input, accounting for compression

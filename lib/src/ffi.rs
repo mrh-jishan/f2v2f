@@ -154,11 +154,14 @@ pub extern "C" fn f2v2f_encode_create(
 /// # Safety
 /// - `handle` must be a valid pointer from `f2v2f_encode_create`
 /// - `input_path` and `output_path` must be valid null-terminated UTF-8 strings
+/// - `encoded_size_out` must be a valid pointer to u64 (nullable)
+/// - `progress_callback` must be null (callbacks not yet supported)
 #[no_mangle]
 pub extern "C" fn f2v2f_encode_file(
     handle: *mut EncodeHandle,
     input_path: *const c_char,
     output_path: *const c_char,
+    encoded_size_out: *mut u64,
     progress_callback: Option<ProgressCallback>,
 ) -> i32 {
     if handle.is_null() {
@@ -180,36 +183,42 @@ pub extern "C" fn f2v2f_encode_file(
 
     let handle_ref = unsafe { &*handle };
 
-    // Use the global Tokio runtime instead of creating new ones
-    match TOKIO_RUNTIME.block_on(async {
-        // Encode the file data
-        let (info, compressed_data) = handle_ref.encoder.encode(input_path_str).await?;
-
-        // Call progress callback with encoding progress
-        if let Some(callback) = progress_callback {
-            let status_msg = CString::new(format!(
-                "Encoded {} bytes with checksum {}",
-                info.original_file_size, info.checksum
-            ))
-            .unwrap_or_else(|_| CString::new("Encoding complete").unwrap());
-            callback(info.original_file_size, info.num_frames, status_msg.as_ptr());
+    // IMPORTANT: Call blocking methods directly - NO async runtime!
+    // This prevents SIGBUS crashes from Tokio runtime in cgo context
+    
+    // Encode the file data (blocking)
+    let (info, compressed_data) = match handle_ref.encoder.encode_blocking(input_path_str) {
+        Ok(result) => result,
+        Err(e) => {
+            set_last_error(format!("{}", e));
+            return F2V2FErrorCode::EncodingError as i32;
         }
+    };
 
-        // Create video from file data
-        let composer = VideoComposer::new(
-            handle_ref.config.width,
-            handle_ref.config.height,
-            handle_ref.config.fps,
-        );
+    // Set encoded size output if provided
+    if !encoded_size_out.is_null() {
+        unsafe {
+            *encoded_size_out = info.encoded_size;
+        }
+    }
 
-        composer.compose_from_file_data(
-            compressed_data,
-            handle_ref.config.chunk_size,
-            output_path_str,
-        ).await?;
+    // Call progress callback with encoding progress (not implemented)
+    if let Some(_callback) = progress_callback {
+        // Callbacks not yet supported in FFI layer
+    }
 
-        Ok::<(), crate::error::F2V2FError>(())
-    }) {
+    // Create video from file data using optimized chunk size (BLOCKING)
+    let composer = VideoComposer::new(
+        handle_ref.config.width,
+        handle_ref.config.height,
+        handle_ref.config.fps,
+    );
+
+    match composer.compose_from_file_data_blocking(
+        compressed_data,
+        info.chunk_size,
+        output_path_str,
+    ) {
         Ok(_) => {
             clear_last_error();
             F2V2FErrorCode::Success as i32

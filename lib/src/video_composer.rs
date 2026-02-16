@@ -32,16 +32,16 @@ impl VideoComposer {
                 "-video_size", &format!("{}x{}", width, height),
                 "-framerate", &fps.to_string(),
                 "-i", "pipe:0",
-                "-c:v", "libx264",
-                "-preset", "slow",
-                "-crf", "15",
+                "-c:v", "libx265",
+                "-preset", "fast",
+                "-crf", "28",
                 "-pix_fmt", "yuv420p",
                 "-movflags", "+faststart",
                 output_path,
             ])
             .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| F2V2FError::EncodingError(format!("Failed to start ffmpeg: {}", e)))?;
 
@@ -77,16 +77,17 @@ impl VideoComposer {
             .map_err(|e| F2V2FError::EncodingError(format!("Wait failed: {}", e)))?;
 
         if !status.success() {
+            let code = status.code().unwrap_or(-1);
             return Err(F2V2FError::EncodingError(
-                format!("ffmpeg exited with code {}", status.code().unwrap_or(-1))
+                format!("FFmpeg exited with code {}. This usually means: out of memory, invalid parameters, or disk full. For large files, try reducing chunk_size or lowering video resolution.", code)
             ));
         }
 
         Ok(())
     }
 
-    /// Create video from geometric art frames based on file data
-    pub async fn compose_from_file_data<P: AsRef<Path>>(
+    /// Create video from geometric art frames based on file data (BLOCKING)
+    pub fn compose_from_file_data_blocking<P: AsRef<Path>>(
         &self,
         file_data: Vec<u8>,
         chunk_size: usize,
@@ -102,7 +103,10 @@ impl VideoComposer {
         let mut stdin = child.stdin.take().ok_or_else(|| F2V2FError::EncodingError("No stdin".to_string()))?;
 
         for (i, chunk) in file_data.chunks(chunk_size).enumerate() {
-            debug!("Generating and writing frame {}/{}", i + 1, num_chunks);
+            if (i + 1) % 100 == 0 || (i + 1) == num_chunks {
+                info!("  📹 Frame {}/{} ({:.1}%)", i + 1, num_chunks, 
+                    ((i + 1) as f32 / num_chunks as f32) * 100.0);
+            }
 
             // Pad the last chunk with zeros if it's smaller than chunk_size
             let mut padded_chunk = chunk.to_vec();
@@ -110,26 +114,59 @@ impl VideoComposer {
                 padded_chunk.resize(chunk_size, 0);
             }
 
-            let img = generator.generate_from_data(&padded_chunk)?;
-            let frame_bytes = img.into_raw();
+            {
+                let img = generator.generate_from_data(&padded_chunk)?;
+                let frame_bytes = img.into_raw();
+                
+                match stdin.write_all(&frame_bytes) {
+                    Ok(_) => {},
+                    Err(e) if e.raw_os_error() == Some(32) => {
+                        return Err(F2V2FError::EncodingError(
+                            format!("FFmpeg pipe broken at frame {}/{} - FFmpeg crashed or ran out of memory. Error: {}", i + 1, num_chunks, e)
+                        ));
+                    },
+                    Err(e) => return Err(F2V2FError::EncodingError(format!("Write failed at frame {}: {}", i + 1, e))),
+                }
+                // frame_bytes and img are dropped here explicitly
+            }
             
-            stdin.write_all(&frame_bytes)
-                .map_err(|e| F2V2FError::EncodingError(format!("Write failed at frame {}: {}", i + 1, e)))?;
+            // Explicit cleanup
+            padded_chunk.clear();
         }
         
         drop(stdin);
+
+        // Read stderr to capture any FFmpeg errors
+        let mut stderr_output = Vec::new();
+        if let Some(mut stderr) = child.stderr.take() {
+            let _ = stderr.read_to_end(&mut stderr_output);
+        }
 
         let status = child.wait()
             .map_err(|e| F2V2FError::EncodingError(format!("Wait failed: {}", e)))?;
 
         if !status.success() {
+            let err_msg = String::from_utf8_lossy(&stderr_output).to_string();
+            debug!("FFmpeg stderr: {}", err_msg);
             return Err(F2V2FError::EncodingError(
-                format!("ffmpeg exited with code {}", status.code().unwrap_or(-1))
+                format!("FFmpeg exited with code {}. Details: {}", status.code().unwrap_or(-1), err_msg)
             ));
         }
 
         info!("Video composition complete");
         Ok(())
+    }
+
+    /// Create video from geometric art frames based on file data
+    pub async fn compose_from_file_data<P: AsRef<Path>>(
+        &self,
+        file_data: Vec<u8>,
+        chunk_size: usize,
+        output_path: P,
+    ) -> Result<()> {
+        // Call the blocking version in a way that's safe for async
+        let output_path_str = output_path.as_ref().to_string_lossy().to_string();
+        self.compose_from_file_data_blocking(file_data, chunk_size, &output_path_str)
     }
 
     /// Extract frames from video
