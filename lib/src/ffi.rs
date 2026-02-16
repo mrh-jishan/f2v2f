@@ -123,12 +123,16 @@ pub extern "C" fn f2v2f_encode_create(
     height: u32,
     fps: u32,
     chunk_size: usize,
+    use_compression: bool,
+    compression_level: i32,
 ) -> *mut EncodeHandle {
     let config = EncodeConfig {
         width,
         height,
         fps,
         chunk_size,
+        use_compression,
+        compression_level,
         art_style: "geometric".to_string(),
         num_threads: num_cpus::get(),
         buffer_size: 1024 * 1024,
@@ -157,6 +161,7 @@ pub extern "C" fn f2v2f_encode_file(
     handle: *mut EncodeHandle,
     input_path: *const c_char,
     output_path: *const c_char,
+    encoded_size_out: *mut u64,
     progress_callback: Option<ProgressCallback>,
 ) -> i32 {
     if handle.is_null() {
@@ -180,10 +185,10 @@ pub extern "C" fn f2v2f_encode_file(
 
     // Use the global Tokio runtime instead of creating new ones
     match TOKIO_RUNTIME.block_on(async {
-        // Encode the file data
-        let (info, file_data) = handle_ref.encoder.encode(input_path_str).await?;
+        // Encode the file directly to video (streaming)
+        let info = handle_ref.encoder.encode_to_video(input_path_str, output_path_str).await?;
 
-        // Call progress callback with encoding progress
+        // Call progress callback with completion info
         if let Some(callback) = progress_callback {
             let status_msg = CString::new(format!(
                 "Encoded {} bytes with checksum {}",
@@ -193,18 +198,11 @@ pub extern "C" fn f2v2f_encode_file(
             callback(info.original_file_size, info.num_frames, status_msg.as_ptr());
         }
 
-        // Create video from file data
-        let composer = VideoComposer::new(
-            handle_ref.config.width,
-            handle_ref.config.height,
-            handle_ref.config.fps,
-        );
-
-        composer.compose_from_file_data(
-            file_data,
-            handle_ref.config.chunk_size,
-            output_path_str,
-        ).await?;
+        if !encoded_size_out.is_null() {
+            unsafe {
+                *encoded_size_out = info.encoded_size;
+            }
+        }
 
         Ok::<(), crate::error::F2V2FError>(())
     }) {
@@ -257,11 +255,15 @@ pub extern "C" fn f2v2f_decode_create_with_params(
     width: u32,
     height: u32,
     chunk_size: usize,
+    use_compression: bool,
+    encoded_size: u64,
 ) -> *mut DecodeHandle {
     let config = DecodeConfig {
         width,
         height,
         chunk_size,
+        use_compression,
+        encoded_size: if encoded_size > 0 { Some(encoded_size) } else { None },
         ..DecodeConfig::default()
     };
 

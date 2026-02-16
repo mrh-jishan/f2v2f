@@ -15,10 +15,10 @@ help:
 	@echo "  make core-test         Run Rust tests"
 	@echo "  make core-clean        Clean Rust build artifacts"
 	@echo ""
-	@echo "Backend (Python Flask):"
-	@echo "  make backend           Setup Python backend (create venv, install deps)"
-	@echo "  make backend-run       Run Flask server on http://localhost:5000"
-	@echo "  make backend-test      Run Python tests"
+	@echo "Backend (Golang Fiber):"
+	@echo "  make backend           Build Go backend server"
+	@echo "  make backend-run       Run Go server on http://localhost:5001"
+	@echo "  make backend-test      Run Go tests"
 	@echo ""
 	@echo "Frontend (Next.js):"
 	@echo "  make frontend          Setup Next.js frontend (install dependencies)"
@@ -69,35 +69,26 @@ core-check:
 	@cd lib && cargo clippy
 
 # ============================================================================
-# BACKEND (Python Flask)
+# BACKEND (Golang Fiber)
 # ============================================================================
 
 backend: core
-	@echo "$(CYAN)Setting up Python Flask backend...$(NC)"
-	@cd backend/python && \
-	if [ ! -d "venv" ]; then \
-		echo "Creating virtual environment..."; \
-		python3 -m venv venv; \
-		. venv/bin/activate && pip install --upgrade pip; \
-		. venv/bin/activate && pip install -r requirements.txt; \
-		echo "$(GREEN)✓ Virtual environment created$(NC)"; \
-	else \
-		echo "Virtual environment already exists"; \
-	fi
+	@echo "$(CYAN)Building Go backend server...$(NC)"
+	@cd backend && go build -o server main.go
 	@echo "$(GREEN)✓ Backend ready$(NC)"
 
 backend-run: backend
-	@echo "$(CYAN)Starting Flask server on http://localhost:5000$(NC)"
-	@cd backend/python && source venv/bin/activate && python app.py
+	@echo "$(CYAN)Starting Go server on http://localhost:5001$(NC)"
+	@cd backend && ./server
 
 backend-test: backend
-	@echo "$(CYAN)Running Python tests...$(NC)"
-	@cd backend/python && source venv/bin/activate && pytest tests/
+	@echo "$(CYAN)Running Go tests...$(NC)"
+	@cd backend && go test ./...
 
 backend-clean:
-	@echo "$(CYAN)Cleaning Python artifacts...$(NC)"
-	@cd backend/python && \
-	rm -rf venv __pycache__ *.pyc .pytest_cache .coverage
+	@echo "$(CYAN)Cleaning Go artifacts...$(NC)"
+	@rm -f backend/server backend/f2v2f.db
+	@rm -rf backend/uploads/* backend/outputs/*
 
 # ============================================================================
 # FRONTEND (Next.js)
@@ -109,7 +100,7 @@ check-node:
 
 install-frontend: check-node
 	@echo "$(CYAN)Installing Next.js frontend dependencies...$(NC)"
-	@cd frontend/nextjs && npm install
+	@cd frontend && npm install
 	@echo "$(GREEN)✓ Frontend dependencies installed$(NC)"
 
 frontend: install-frontend
@@ -117,20 +108,20 @@ frontend: install-frontend
 frontend-dev: install-frontend
 	@echo "$(CYAN)Starting Next.js in development mode...$(NC)"
 	@echo "$(YELLOW)Frontend will be available at http://localhost:3000$(NC)"
-	@cd frontend/nextjs && npm run dev
+	@cd frontend && npm run dev
 
 frontend-build: install-frontend
 	@echo "$(CYAN)Building Next.js for production...$(NC)"
-	@cd frontend/nextjs && npm run build
+	@cd frontend && npm run build
 	@echo "$(GREEN)✓ Production build complete$(NC)"
 
 frontend-start: frontend-build
 	@echo "$(CYAN)Starting Next.js production server...$(NC)"
-	@cd frontend/nextjs && npm run start
+	@cd frontend && npm run start
 
 frontend-clean:
 	@echo "$(CYAN)Cleaning Next.js artifacts...$(NC)"
-	@cd frontend/nextjs && rm -rf node_modules .next out .env.local
+	@cd frontend && rm -rf node_modules .next out .env.local
 
 # ============================================================================
 # FULL STACK
@@ -140,16 +131,16 @@ all: core backend install-frontend
 	@echo "$(GREEN)✓ All components built successfully$(NC)"
 	@echo ""
 	@echo "$(CYAN)To start development:$(NC)"
-	@echo "  Terminal 1: make backend-run    (Flask on :5000)"
+	@echo "  Terminal 1: make backend-run    (Go on :5001)"
 	@echo "  Terminal 2: make frontend-dev   (Next.js on :3000)"
 
-dev: backend
+dev:
 	@echo "$(CYAN)Starting full stack development...$(NC)"
-	@echo "$(YELLOW)Backend: http://localhost:5000$(NC)"
+	@echo "$(YELLOW)Backend: http://localhost:5001$(NC)"
 	@echo "$(YELLOW)Frontend: http://localhost:3000$(NC)"
-	@cd backend/python && source venv/bin/activate && python app.py &
-	@sleep 2
-	@cd frontend/nextjs && npm run dev
+	@make backend-run & \
+	sleep 2 && \
+	make frontend-dev
 
 # ============================================================================
 # DOCKER
@@ -157,7 +148,6 @@ dev: backend
 
 docker-build: 
 	@echo "$(CYAN)Building Docker images...$(NC)"
-	docker build -f Dockerfile.new -t f2v2f:latest .
 	docker build -f Dockerfile.compose-backend -t f2v2f-backend:latest .
 	docker build -f Dockerfile.compose-frontend -t f2v2f-frontend:latest .
 	@echo "$(GREEN)✓ Docker images built$(NC)"
@@ -169,7 +159,7 @@ docker-up: docker-build
 	@echo ""
 	@echo "$(CYAN)Application URLs:$(NC)"
 	@echo "  Frontend:  http://localhost:3000"
-	@echo "  Backend:   http://localhost:5000"
+	@echo "  Backend:   http://localhost:5001"
 
 docker-down:
 	@echo "$(CYAN)Stopping Docker services...$(NC)"
@@ -196,8 +186,7 @@ clean: core-clean backend-clean frontend-clean
 deep-clean: clean
 	@echo "$(CYAN)Performing deep clean...$(NC)"
 	@cd lib && cargo clean
-	@rm -rf backend/python/venv
-	@rm -rf frontend/nextjs/node_modules frontend/nextjs/.next frontend/nextjs/out
+	@rm -rf frontend/node_modules frontend/.next frontend/out
 	@echo "$(GREEN)✓ Deep clean complete$(NC)"
 
 # ============================================================================
@@ -209,19 +198,15 @@ status:
 	@echo ""
 	@echo "Rust Core:"
 	@test -d lib/target/release && echo "  $(GREEN)✓ Built$(NC)" || echo "  $(YELLOW)⚠ Not built$(NC)"
-	@echo "Python Backend:"
-	@test -d backend/python/venv && echo "  $(GREEN)✓ Installed$(NC)" || echo "  $(YELLOW)⚠ Not installed$(NC)"
+	@echo "Go Backend:"
+	@test -f backend/server && echo "  $(GREEN)✓ Built$(NC)" || echo "  $(YELLOW)⚠ Not built$(NC)"
 	@echo "Next.js Frontend:"
-	@test -d frontend/nextjs/node_modules && echo "  $(GREEN)✓ Installed$(NC)" || echo "  $(YELLOW)⚠ Not installed$(NC)"
+	@test -d frontend/node_modules && echo "  $(GREEN)✓ Installed$(NC)" || echo "  $(YELLOW)⚠ Not installed$(NC)"
 
 version:
-	@echo "f2v2f Project Structure v2.0"
+	@echo "f2v2f Project Structure v2.1 (Golang)"
 	@echo ""
 	@echo "Components:"
 	@echo "  - Rust Core: lib/"
-	@echo "  - Python Backend: backend/python/"
-	@echo "  - Next.js Frontend: frontend/nextjs/"
-
-# Show current working directory
-pwd:
-	@pwd
+	@echo "  - Go Backend: backend/"
+	@echo "  - Next.js Frontend: frontend/"

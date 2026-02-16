@@ -86,36 +86,43 @@ impl VideoComposer {
         Ok(())
     }
 
-    /// Create video from geometric art frames based on file data
-    pub async fn compose_from_file_data<P: AsRef<Path>>(
+    /// Create video from geometric art frames based on file data stream
+    pub async fn compose_from_file_data<P: AsRef<Path>, R: Read>(
         &self,
-        file_data: Vec<u8>,
+        mut reader: R,
+        total_size: u64,
         chunk_size: usize,
         output_path: P,
     ) -> Result<()> {
         let output = output_path.as_ref();
-        info!("Creating video from file data to {}", output.display());
+        info!("Creating video from file data stream to {}", output.display());
 
-        let num_chunks = (file_data.len() + chunk_size - 1) / chunk_size;
+        let num_chunks = (total_size + chunk_size as u64 - 1) / chunk_size as u64;
         let generator = GeometricArtGenerator::new(self.width, self.height, 42);
 
         let mut child = Self::ffmpeg_encode(self.width, self.height, self.fps, &output.to_string_lossy())?;
         let mut stdin = child.stdin.take().ok_or_else(|| F2V2FError::EncodingError("No stdin".to_string()))?;
 
-        for (i, chunk) in file_data.chunks(chunk_size).enumerate() {
-            debug!("Generating and writing frame {}/{}", i + 1, num_chunks);
+        let mut buffer = vec![0u8; chunk_size];
+        let mut chunk_count = 0;
+
+        loop {
+            let n = reader.read(&mut buffer)?;
+            if n == 0 { break; }
+            
+            chunk_count += 1;
+            debug!("Generating and writing frame {}/{}", chunk_count, num_chunks);
 
             // Pad the last chunk with zeros if it's smaller than chunk_size
-            let mut padded_chunk = chunk.to_vec();
-            if padded_chunk.len() < chunk_size {
-                padded_chunk.resize(chunk_size, 0);
+            if n < chunk_size {
+                buffer[n..].fill(0);
             }
 
-            let img = generator.generate_from_data(&padded_chunk)?;
+            let img = generator.generate_from_data(&buffer)?;
             let frame_bytes = img.into_raw();
             
             stdin.write_all(&frame_bytes)
-                .map_err(|e| F2V2FError::EncodingError(format!("Write failed at frame {}: {}", i + 1, e)))?;
+                .map_err(|e| F2V2FError::EncodingError(format!("Write failed at frame {}: {}", chunk_count, e)))?;
         }
         
         drop(stdin);
@@ -129,15 +136,19 @@ impl VideoComposer {
             ));
         }
 
-        info!("Video composition complete");
+        info!("Video composition complete. Total frames: {}", chunk_count);
         Ok(())
     }
 
-    /// Extract frames from video
-    pub async fn extract_frames<P: AsRef<Path>>(
+    /// Extract frames from video one by one using a callback
+    pub async fn extract_frames<P: AsRef<Path>, F>(
         &self,
         video_path: P,
-    ) -> Result<Vec<ImageBuffer<image::Rgba<u8>, Vec<u8>>>> {
+        mut callback: F,
+    ) -> Result<()> 
+    where 
+        F: FnMut(ImageBuffer<image::Rgba<u8>, Vec<u8>>) -> Result<()>
+    {
         let path = video_path.as_ref();
         info!("Extracting frames from: {}", path.display());
 
@@ -155,8 +166,8 @@ impl VideoComposer {
             .map_err(|e| F2V2FError::DecodingError(format!("Failed to start ffmpeg: {}", e)))?;
 
         let mut stdout = child.stdout.take().ok_or_else(|| F2V2FError::DecodingError("No stdout".to_string()))?;
-        let mut frames = Vec::new();
         let frame_size = (self.width * self.height * 4) as usize;
+        let mut frame_count = 0;
         
         loop {
             let mut buffer = vec![0u8; frame_size];
@@ -164,10 +175,15 @@ impl VideoComposer {
                 Ok(_) => {
                     let img = ImageBuffer::from_raw(self.width, self.height, buffer)
                         .ok_or_else(|| F2V2FError::DecodingError("Failed to create image from raw bytes".to_string()))?;
-                    frames.push(img);
+                    
+                    callback(img)?;
+                    frame_count += 1;
+                    if frame_count % 100 == 0 {
+                        debug!("Extracted {} frames...", frame_count);
+                    }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                Err(e) => return Err(F2V2FError::DecodingError(format!("Read failed: {}", e))),
+                Err(e) => return Err(F2V2FError::DecodingError(format!("Read failed at frame {}: {}", frame_count + 1, e))),
             }
         }
 
@@ -179,8 +195,8 @@ impl VideoComposer {
             warn!("ffmpeg exited with code {}", status.code().unwrap_or(-1));
         }
 
-        info!("Extracted {} frames", frames.len());
-        Ok(frames)
+        info!("Finished extracting {} frames", frame_count);
+        Ok(())
     }
 }
 

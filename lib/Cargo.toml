@@ -40,6 +40,8 @@ nalgebra = "0.32"
 # Hashing
 sha2 = "0.10"
 hex = "0.4"
+# Compression
+zstd = { version = "0.13", features = ["zstdmt"] }
 # File handling
 walkdir = "2"
 tempfile = "3"

@@ -45,27 +45,25 @@ lib/target/release/
 
 ## 🔧 Using the Library
 
-### From Python
+### From Golang
 
-```python
-from f2v2f import Encoder, Decoder
+```go
+import "github.com/mrh-jishan/f2v2f/backend/f2v2f"
 
-# Encode a file
-encoder = Encoder(width=1920, height=1080, fps=30)
-encoder.encode("input.pdf", "output.mp4")
+// Encode
+encoder, _ := f2v2f.NewEncoder(1920, 1080, 30, 4096, true, 3)
+encodedSize, _ := encoder.Encode("input.pdf", "output.mp4")
 
-# Decode back
-decoder = Decoder()
-decoder.decode("output.mp4", "recovered.pdf")
+// Decode
+decoder, _ := f2v2f.NewDecoder(1920, 1080, 4096, true, encodedSize)
+decoder.Decode("output.mp4", "restored.pdf")
 ```
 
-**Python Setup:**
+**Go Setup:**
 ```bash
 cd ../backend
-pip install -r requirements.txt
-python3
->>> import f2v2f
->>> print(f2v2f.version())
+go build -o server main.go
+./server
 ```
 
 ### From TypeScript/Node.js
@@ -258,8 +256,8 @@ export LD_LIBRARY_PATH="/usr/lib:$LD_LIBRARY_PATH"
 
 1. **Add to Rust code** (e.g., `src/encoder.rs`)
 2. **Export via FFI** in `src/ffi.rs`
-3. **Update Python wrapper** in `../backend/f2v2f.py`
-4. **Update TypeScript wrapper** in `../frontend/lib/f2v2f.ts`
+3. **Update Go wrapper** in `../backend/f2v2f/bindings.go`
+4. **Update TypeScript wrapper** in `../frontend/lib/api.ts`
 5. **Rebuild library**: `cargo build --release --lib`
 6. **Test changes**: `cargo test --release`
 

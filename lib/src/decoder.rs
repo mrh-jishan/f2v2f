@@ -2,10 +2,11 @@ use crate::error::{F2V2FError, Result, ErrorContext};
 use crate::config::DecodeConfig;
 use sha2::{Sha256, Digest};
 use std::fs::File;
-use std::io::{Write, BufWriter, Read};
+use std::io::{Write, BufWriter, Read, BufReader};
 use std::path::Path;
 use indicatif::{ProgressBar, ProgressStyle};
 use tracing::{info, warn, debug};
+use tempfile;
 
 /// Decodes a video back to the original file
 pub struct Decoder {
@@ -33,24 +34,89 @@ impl Decoder {
 
         info!("Starting file decoding: {}", input_path.display());
 
-        // Open output for writing
-        let output_file = File::create(output_path)?;
-        let mut writer = BufWriter::new(output_file);
+        // Use a temporary file for extraction if compression is enabled
+        if self.config.use_compression {
+            let mut temp_file = tempfile::NamedTempFile::new()?;
+            info!("Extracting compressed data to temp file: {}", temp_file.path().display());
+            
+            let (_extracted_size, _checksum) = self
+                .process_video(input_path, &mut temp_file)
+                .await?;
+            
+            temp_file.as_file_mut().flush()?;
+            
+            // Re-open for reading
+            let mut temp_reader = BufReader::new(File::open(temp_file.path())?);
+            
+            let mut final_output = File::create(output_path)?;
+            let mut hasher = Sha256::new();
+            
+            info!("Decompressing extracted data...");
+            let start = std::time::Instant::now();
+            
+            let mut total_restored = 0;
+            // Use a limited reader if encoded_size is set
+            if let Some(limit) = self.config.encoded_size {
+                let mut limited = temp_reader.take(limit);
+                let mut zstd_decoder = zstd::stream::read::Decoder::new(&mut limited)?;
+                let mut buffer = vec![0u8; 128 * 1024];
+                loop {
+                    let n = zstd_decoder.read(&mut buffer)?;
+                    if n == 0 { break; }
+                    hasher.update(&buffer[..n]);
+                    final_output.write_all(&buffer[..n])?;
+                    total_restored += n as u64;
+                }
+            } else {
+                let mut zstd_decoder = zstd::stream::read::Decoder::new(temp_reader)?;
+                let mut buffer = vec![0u8; 128 * 1024];
+                loop {
+                    let n = zstd_decoder.read(&mut buffer)?;
+                    if n == 0 { break; }
+                    hasher.update(&buffer[..n]);
+                    final_output.write_all(&buffer[..n])?;
+                    total_restored += n as u64;
+                }
+            }
+            
+            let duration = start.elapsed();
+            let checksum = format!("{:x}", hasher.finalize());
+            info!("Decompression complete in {:?}. Restored {} bytes", duration, total_restored);
+            
+            Ok(DecodedFileInfo {
+                extracted_size: total_restored,
+                checksum,
+                matches_checksum: false,
+            })
+        } else {
+            let mut final_output = File::create(output_path)?;
+            let (_extracted_size, _checksum) = self
+                .process_video(input_path, &mut final_output)
+                .await?;
+            
+            // Truncate if encoded_size is known
+            if let Some(limit) = self.config.encoded_size {
+                final_output.set_len(limit)?;
+            }
+            
+            final_output.sync_all()?;
+            
+            // Recalculate checksum if truncated
+            let checksum = if self.config.encoded_size.is_some() {
+                let mut hasher = Sha256::new();
+                let mut f = File::open(output_path)?;
+                std::io::copy(&mut f, &mut hasher)?;
+                format!("{:x}", hasher.finalize())
+            } else {
+                _checksum
+            };
 
-        let (extracted_size, checksum) = self
-            .process_video(input_path, &mut writer)
-            .await?;
-
-        writer.flush()?;
-
-        info!("Decoding complete. Extracted {} bytes", extracted_size);
-        info!("Checksum: {}", checksum);
-
-        Ok(DecodedFileInfo {
-            extracted_size,
-            checksum,
-            matches_checksum: false, // Would be set after comparing with original
-        })
+            Ok(DecodedFileInfo {
+                extracted_size: self.config.encoded_size.unwrap_or(_extracted_size),
+                checksum,
+                matches_checksum: false,
+            })
+        }
     }
 
     async fn process_video<W: Write>(
@@ -64,37 +130,25 @@ impl Decoder {
         let composer = crate::video_composer::VideoComposer::new(
             self.config.width,
             self.config.height,
-            30, // FPS doesn't matter much for decoding
+            30,
         );
 
-        let frames = composer.extract_frames(video_path).await?;
         let generator = crate::image_generator::GeometricArtGenerator::new(
             self.config.width,
             self.config.height,
-            42, // Should ideally match the encoding seed
+            42,
         );
 
-        let progress = ProgressBar::new(frames.len() as u64);
-        progress.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} frames ({eta})")
-                .unwrap_or_else(|_| ProgressStyle::default_bar())
-                .progress_chars("#>-"),
-        );
-
-        for (_i, frame) in frames.iter().enumerate() {
-            let data = generator.decode_from_image(frame, self.config.chunk_size)?;
+        // Process frames one by one via callback
+        composer.extract_frames(video_path, |frame| {
+            let data = generator.decode_from_image(&frame, self.config.chunk_size)?;
             
-            // Note: Currently we don't know the exact end of data if it's not a full chunk
-            // For now we write the whole chunk. A better implementation would store the length.
             hasher.update(&data);
-            writer.write_all(&data)?;
+            writer.write_all(&data).map_err(|e| F2V2FError::Io(e.to_string()))?;
             total_bytes_written += data.len() as u64;
             
-            progress.inc(1);
-        }
-
-        progress.finish_with_message("Decoding complete!");
+            Ok(())
+        }).await?;
 
         let checksum = format!("{:x}", hasher.finalize());
         Ok((total_bytes_written, checksum))

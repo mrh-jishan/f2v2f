@@ -3,10 +3,11 @@ use crate::config::EncodeConfig;
 use crate::image_generator::GeometricArtGenerator;
 use sha2::{Sha256, Digest};
 use std::fs::File;
-use std::io::{Read, BufReader};
+use std::io::{Read, BufReader, Write};
 use std::path::Path;
 use indicatif::{ProgressBar, ProgressStyle};
 use tracing::{info, warn, debug};
+use tempfile;
 
 /// Encodes a file into a video with artistic frames
 pub struct Encoder {
@@ -21,6 +22,7 @@ pub struct EncodedFileInfo {
     pub num_frames: u64,
     pub chunk_size: usize,
     pub art_style: String,
+    pub encoded_size: u64,
 }
 
 impl Encoder {
@@ -29,108 +31,115 @@ impl Encoder {
         Ok(Self { config })
     }
 
-    /// Encode a file to video
-    pub async fn encode<P: AsRef<Path>>(&self, input: P) -> Result<(EncodedFileInfo, Vec<u8>)> {
-        let path = input.as_ref();
+    /// Encode a file to video (streaming version for terabyte-scale files)
+    pub async fn encode_to_video<P: AsRef<Path>>(&self, input: P, output: P) -> Result<EncodedFileInfo> {
+        let input_path = input.as_ref();
+        let output_path = output.as_ref();
         
-        info!("Starting file encoding: {}", path.display());
+        info!("Starting streaming file encoding: {} -> {}", input_path.display(), output_path.display());
 
-        // Get file information
-        let file_size = std::fs::metadata(path)?.len();
-        info!("File size: {} bytes ({:.2} MB)", file_size, file_size as f64 / 1024.0 / 1024.0);
-
+        let file_size = std::fs::metadata(input_path)?.len();
         if file_size == 0 {
             return Err(F2V2FError::InvalidInput("Cannot encode empty files".to_string()));
         }
 
-        // Calculate number of frames needed
-        let bytes_per_frame = self.config.width as usize * self.config.height as usize * 3; // RGB
-        let num_frames = ((file_size as usize + self.config.chunk_size - 1) / self.config.chunk_size) as u64;
-        
-        info!("Will generate {} frames", num_frames);
-
-        // Read and process file
-        let file = File::open(path)?;
-        let reader = BufReader::new(file);
-
-        let (checksum, encoded_data) = self
-            .process_file(reader, file_size, num_frames)
-            .await?;
-
-        let info = EncodedFileInfo {
-            original_file_size: file_size,
-            checksum,
-            num_frames,
-            chunk_size: self.config.chunk_size,
-            art_style: self.config.art_style.clone(),
-        };
-
-        info!("Encoding complete. Checksum: {}", info.checksum);
-
-        Ok((info, encoded_data))
-    }
-
-    async fn process_file(
-        &self,
-        mut reader: BufReader<File>,
-        file_size: u64,
-        num_frames: u64,
-    ) -> Result<(String, Vec<u8>)> {
+        let file = File::open(input_path)?;
+        let mut reader = BufReader::new(file);
         let mut hasher = Sha256::new();
-        let mut all_data = Vec::new();
-        let mut buffer = vec![0u8; self.config.chunk_size];
 
-        let progress = ProgressBar::new(file_size);
-        progress.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-                .unwrap_or_else(|_| ProgressStyle::default_bar())
-                .progress_chars("#>-"),
+        let composer = crate::video_composer::VideoComposer::new(
+            self.config.width,
+            self.config.height,
+            self.config.fps,
         );
 
-        let mut frame_number = 0;
-
-        loop {
-            match reader.read(&mut buffer) {
-                Ok(0) => break, // EOF
-                Ok(n) => {
-                    let chunk = &buffer[..n];
-                    
-                    // Update progress
-                    progress.inc(n as u64);
-                    debug!("Frame {}: processed {} bytes", frame_number, n);
-
-                    // Update hash
-                    hasher.update(chunk);
-
-                    // Store data (in real implementation, would generate video frame here)
-                    all_data.extend_from_slice(chunk);
-
-                    frame_number += 1;
-
-                    // Check for cancellation or timeouts
-                    self.check_operation_health(frame_number)?;
+        // We'll use a pipe to stream compressed data to the composer
+        // For now, if compression is enabled, we use a temp file to store the compressed stream
+        // because VideoComposer::compose_from_file_data currently reads from a Read.
+        // If no compression, we can stream directly from the input file.
+        
+        if self.config.use_compression {
+            let mut temp_file = tempfile::NamedTempFile::new()?;
+            info!("Streaming compression to temp file: {}", temp_file.path().display());
+            
+            {
+                let mut encoder = zstd::stream::write::Encoder::new(&mut temp_file, self.config.compression_level)?;
+                encoder.multithread(num_cpus::get() as u32)?;
+                
+                let mut buffer = vec![0u8; 128 * 1024];
+                loop {
+                    let n = reader.read(&mut buffer)?;
+                    if n == 0 { break; }
+                    hasher.update(&buffer[..n]);
+                    encoder.write_all(&buffer[..n])?;
                 }
-                Err(e) => {
-                    return Err(F2V2FError::Io(e.to_string()).into());
-                }
+                encoder.finish()?;
             }
+            
+            let checksum = format!("{:x}", hasher.finalize());
+            let compressed_size = temp_file.as_file().metadata()?.len();
+            
+            // Now compose from the temp file
+            temp_file.as_file_mut().sync_all()?;
+            let mut temp_reader = BufReader::new(File::open(temp_file.path())?);
+            
+            composer.compose_from_file_data(
+                &mut temp_reader,
+                compressed_size,
+                self.config.chunk_size,
+                output,
+            ).await?;
+            
+            let num_frames = (compressed_size + self.config.chunk_size as u64 - 1) / self.config.chunk_size as u64;
+            
+            Ok(EncodedFileInfo {
+                original_file_size: file_size,
+                checksum,
+                num_frames,
+                chunk_size: self.config.chunk_size,
+                art_style: self.config.art_style.clone(),
+                encoded_size: compressed_size,
+            })
+        } else {
+            // Direct stream
+            composer.compose_from_file_data(
+                &mut reader, // Note: This will consume reader, but we need hasher
+                file_size,   // Raw data is the same as file_size
+                self.config.chunk_size,
+                output,
+            ).await?;
+            
+            // Re-hash if needed, but wait, compose_from_file_data consumes the reader.
+            // Better to use a hashing reader.
+            // For now, let's just do a simple re-read for hash if it's small, or hash during compose.
+            // Let's assume the user wants speed.
+            
+            // We'll re-open to hash for correctness (small overhead compared to video encoding)
+            let mut h_file = File::open(input_path)?;
+            std::io::copy(&mut h_file, &mut hasher)?;
+            let checksum = format!("{:x}", hasher.finalize());
+            
+            let num_frames = (file_size + self.config.chunk_size as u64 - 1) / self.config.chunk_size as u64;
+            
+            Ok(EncodedFileInfo {
+                original_file_size: file_size,
+                checksum,
+                num_frames,
+                chunk_size: self.config.chunk_size,
+                art_style: self.config.art_style.clone(),
+                encoded_size: file_size,
+            })
         }
-
-        progress.finish_with_message("Encoding complete!");
-
-        let checksum = format!("{:x}", hasher.finalize());
-        Ok((checksum, all_data))
     }
 
-    fn check_operation_health(&self, frame_number: u64) -> Result<()> {
-        // Check for memory pressure, cancellation signals, etc.
-        // This would be expanded with actual monitoring
-        if frame_number % 100 == 0 {
-            debug!("Health check at frame {}", frame_number);
-        }
-        Ok(())
-    }
+    // fn check_operation_health(&self, frame_number: u64) -> Result<()> {
+    //     // Check for memory pressure, cancellation signals, etc.
+    //     // This would be expanded with actual monitoring
+    //     if frame_number % 100 == 0 {
+    //         debug!("Health check at frame {}", frame_number);
+    //     }
+    //     Ok(())
+    // }
 
     /// Estimate the video file size
     pub fn estimate_video_size(&self, file_size: u64) -> u64 {

@@ -17,7 +17,7 @@ impl GeometricArtGenerator {
     /// Generate a geometric pattern image
     pub fn generate(&self) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>> {
         let mut img = ImageBuffer::new(self.width, self.height);
-        let mut rng = rand::thread_rng();
+        let mut _rng = rand::thread_rng();
 
         // Base color
         let base_hue = ((self.seed as f32) % 360.0) as f32;
@@ -83,24 +83,20 @@ impl GeometricArtGenerator {
 
     fn compute_pattern_with_data(&self, x: f32, y: f32, data_byte: u8) -> f32 {
         let base_pattern = self.compute_pattern(x, y);
-        let data_influence = (data_byte as f32 / 255.0) * 2.0 - 1.0; // [-1, 1]
+        // Map 0..255 to the center of 256 buckets in [-1, 1]
+        let data_influence = ((data_byte as f32 + 0.5) / 256.0) * 2.0 - 1.0; 
 
-        // Increase data influence for better robustness
-        base_pattern * 0.2 + data_influence * 0.8
+        // Increase data influence for better robustness (90% signal)
+        base_pattern * 0.1 + data_influence * 0.9
     }
 
-    fn pattern_to_color(&self, pattern: f32, base_hue: f32) -> Rgba<u8> {
-        // Normalize pattern
+    fn pattern_to_color(&self, pattern: f32, _base_hue: f32) -> Rgba<u8> {
+        // Normalize pattern to [0, 1]
         let normalized = ((pattern + 1.0) / 2.0).max(0.0).min(1.0);
 
-        // Convert HSL to RGB
-        let hue = (base_hue + normalized * 120.0) % 360.0;
-        let saturation = 0.7;
-        let lightness = normalized * 0.7 + 0.15;
-
-        let (r, g, b) = self.hsl_to_rgb(hue, saturation, lightness);
-
-        Rgba([r, g, b, 255])
+        // Map to grayscale for maximum robustness across color space conversions
+        let v = (normalized * 255.0).round() as u8;
+        Rgba([v, v, v, 255])
     }
 
     fn hsl_to_rgb(&self, h: f32, s: f32, l: f32) -> (u8, u8, u8) {
@@ -131,7 +127,7 @@ impl GeometricArtGenerator {
         let mut accumulations = vec![0.0f32; chunk_size];
         let mut counts = vec![0u32; chunk_size];
 
-        let base_hue = self.bytes_to_seed(&[0]); // This is a bit arbitrary, should ideally match what was used
+        let base_hue = 0.0; // Consistently ignored in lightness-based extraction
 
         for y in 0..self.height {
             for x in 0..self.width {
@@ -144,9 +140,13 @@ impl GeometricArtGenerator {
                 let pattern = self.color_to_pattern(pixel, base_hue);
                 
                 let base_pattern = self.compute_pattern(fx, fy);
-                // pattern = base_pattern * 0.2 + data_influence * 0.8
-                let data_influence = (pattern - base_pattern * 0.2) / 0.8;
-                let data_byte = ((data_influence + 1.0) / 2.0 * 255.0).max(0.0).min(255.0);
+                // pattern = base_pattern * 0.1 + data_influence * 0.9
+                let data_influence = (pattern - base_pattern * 0.1) / 0.9;
+                
+                // data_influence = ((data_byte + 0.5) / 256.0) * 2.0 - 1.0
+                // (data_influence + 1.0) / 2.0 = (data_byte + 0.5) / 256.0
+                // data_byte = ((data_influence + 1.0) / 2.0 * 256.0) - 0.5
+                let data_byte = (data_influence + 1.0) / 2.0 * 256.0 - 0.5;
 
                 accumulations[pixel_idx] += data_byte;
                 counts[pixel_idx] += 1;
@@ -155,7 +155,8 @@ impl GeometricArtGenerator {
 
         for i in 0..chunk_size {
             if counts[i] > 0 {
-                data[i] = (accumulations[i] / counts[i] as f32).round() as u8;
+                // Rounding the average of 500+ pixels should be extremely robust
+                data[i] = (accumulations[i] / counts[i] as f32).round().max(0.0).min(255.0) as u8;
             }
         }
 
@@ -163,21 +164,10 @@ impl GeometricArtGenerator {
     }
 
     fn color_to_pattern(&self, color: &Rgba<u8>, _base_hue: f32) -> f32 {
-        // This is a simplified reversal of pattern_to_color
-        // Since pattern_to_color uses lightness predominantly based on pattern
-        let r = color[0] as f32 / 255.0;
-        let g = color[1] as f32 / 255.0;
-        let b = color[2] as f32 / 255.0;
-
-        let max = r.max(g).max(b);
-        let min = r.min(g).min(b);
-        let lightness = (max + min) / 2.0;
-
-        // lightness = normalized * 0.7 + 0.15
-        let normalized = (lightness - 0.15) / 0.7;
+        let v = color[0] as f32 / 255.0;
         
-        // normalized = (pattern + 1.0) / 2.0
-        normalized * 2.0 - 1.0
+        // v = normalized = (pattern + 1.0) / 2.0
+        v * 2.0 - 1.0
     }
 
     fn bytes_to_seed(&self, data: &[u8]) -> f32 {

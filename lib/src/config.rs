@@ -19,6 +19,10 @@ pub struct EncodeConfig {
     pub num_threads: usize,
     /// Buffer size for reading file
     pub buffer_size: usize,
+    /// Use compression before encoding
+    pub use_compression: bool,
+    /// Compression level (1-22 for zstd, default 3)
+    pub compression_level: i32,
 }
 
 impl Default for EncodeConfig {
@@ -31,6 +35,8 @@ impl Default for EncodeConfig {
             art_style: "geometric".to_string(),
             num_threads: num_cpus::get(),
             buffer_size: 1024 * 1024, // 1MB
+            use_compression: true,
+            compression_level: 3,
         }
     }
 }
@@ -103,6 +109,10 @@ pub struct DecodeConfig {
     pub buffer_size: usize,
     /// Verify checksum after decoding
     pub verify_checksum: bool,
+    /// Whether the data was compressed
+    pub use_compression: bool,
+    /// Explicitly set the encoded data size (to trim padding)
+    pub encoded_size: Option<u64>,
 }
 
 impl Default for DecodeConfig {
@@ -114,6 +124,8 @@ impl Default for DecodeConfig {
             num_threads: num_cpus::get(),
             buffer_size: 1024 * 1024, // 1MB
             verify_checksum: true,
+            use_compression: true,
+            encoded_size: None,
         }
     }
 }

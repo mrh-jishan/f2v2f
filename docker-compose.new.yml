@@ -1,28 +1,25 @@
 version: '3.8'
 
 services:
-  # Python Flask Backend
+  # Go Fiber Backend
   backend:
     build:
       context: .
       dockerfile: Dockerfile.compose-backend
     container_name: f2v2f-backend
     ports:
-      - "5000:5000"
+      - "5001:5001"
     environment:
-      FLASK_APP: app.py
-      FLASK_ENV: development
-      FLASK_DEBUG: "1"
       ENCODING_WIDTH: "1920"
       ENCODING_HEIGHT: "1080"
       ENCODING_FPS: "30"
     volumes:
-      - ./backend/python:/app
+      - ./backend:/app
       - ./lib/target/release:/app/lib:ro
     networks:
       - f2v2f-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -36,9 +33,9 @@ services:
     ports:
       - "3000:3000"
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:5000/api
+      NEXT_PUBLIC_API_URL: http://localhost:5001
     volumes:
-      - ./frontend/nextjs:/app
+      - ./frontend:/app
       - /app/node_modules
       - /app/.next
     networks:

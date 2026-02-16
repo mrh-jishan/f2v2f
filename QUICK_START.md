@@ -1,14 +1,15 @@
 # f2v2f Quick Start Guide ⚡
 
-Get f2v2f running in 3 minutes.
+Get f2v2f running in 3 minutes with the new Go backend.
 
 ## Prerequisites Check
 
 ```bash
 rustc --version      # Should be 1.70+
-python3 --version    # Should be 3.8+
+go version           # Should be 1.20+
 node --version       # Should be 16+
 npm --version        # Should be 8+
+ffmpeg -version      # Should be 7.0+
 ```
 
 ## Start Development (The Fast Way)
@@ -16,13 +17,13 @@ npm --version        # Should be 8+
 ### One-Time Setup
 ```bash
 cd f2v2f
-make all           # Build everything (5-10 minutes)
+make all           # Build everything (core, backend, frontend)
 ```
 
 ### Run It
 ```bash
 # Terminal 1: Start Backend
-make backend-run   # runs on http://localhost:5000
+make backend-run   # runs on http://localhost:5001
 
 # Terminal 2: Start Frontend
 make frontend-dev  # runs on http://localhost:3000
@@ -36,7 +37,8 @@ make frontend-dev  # runs on http://localhost:3000
 |------|---------|
 | Build everything | `make all` |
 | Build just core | `make core` |
-| Run Flask | `make backend-run` |
+| Build Go backend | `make backend` |
+| Run Go backend | `make backend-run` |
 | Run Next.js | `make frontend-dev` |
 | Run both (Docker) | `docker-compose -f docker-compose.new.yml up` |
 | Test everything | `make test` |
@@ -49,14 +51,14 @@ make frontend-dev  # runs on http://localhost:3000
 cd f2v2f
 docker-compose -f docker-compose.new.yml up
 # Frontend: http://localhost:3000
-# Backend: http://localhost:5000
+# Backend: http://localhost:5001
 ```
 
 ## File Locations
 
 ```
 Rust Core:           lib/src/*.rs
-Flask Backend:       backend/app.py
+Golang Backend:      backend/main.go
 Next.js Frontend:    frontend/app/page.tsx
 React Components:    frontend/components/
 Tailwind Styles:     frontend/styles/globals.css
@@ -68,7 +70,7 @@ API Client:          frontend/lib/api.ts
 1. **Upload a File**
    - Click "Encode" tab
    - Drag & drop a file
-   - Watch progress
+   - Watch progress (now faster with Go!)
    - Download the video
 
 2. **Watch the Video**
@@ -83,7 +85,7 @@ API Client:          frontend/lib/api.ts
 
 4. **Browse History**
    - Click "History" tab
-   - See all your past encodes/decodes
+   - See all your past encodes/decodes (stored in SQLite)
    - Watch videos directly
 
 ## Troubleshooting
@@ -103,23 +105,23 @@ ls lib/target/release/libf2v2f.*
 
 ### Port in use?
 ```bash
-# Change port
-FLASK_PORT=5001 make backend-run
+# Change port (Go backend)
+PORT=5002 make backend-run
 PORT=3001 make frontend-dev
 ```
 
 ### Still stuck?
-See [SETUP_GUIDE.md](SETUP_GUIDE.md) for detailed troubleshooting.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed architecture.
 
 ## Project Structure
 
 ```
 f2v2f/
-├── lib/                      # Rust (build once)
-├── backend/                  # Flask REST API
-│   ├── app.py               # Main server
-│   ├── f2v2f.py             # Library wrapper
-│   └── venv/                # Python environment
+├── lib/                      # Rust Core (Performance engine)
+├── backend/                  # Golang Fiber REST API
+│   ├── main.go               # Main server
+│   ├── f2v2f/                # Go bindings for Rust
+│   └── f2v2f.db              # SQLite Database
 ├── frontend/                 # Next.js web app
 │   ├── app/page.tsx         # Main interface
 │   ├── components/          # React components
@@ -129,31 +131,31 @@ f2v2f/
 
 ## API Quick Reference
 
-All endpoints: `http://localhost:5000/api/`
+All endpoints: `http://localhost:5001/api/`
 
 ```bash
 # Start encoding
 curl -X POST -F "file=@myfile.pdf" \
-  http://localhost:5000/api/encode
-# Returns: {"job_id": "xxx"}
+  http://localhost:5001/api/encode
+# Returns: {"job_id": "xxx", "status": "pending"}
 
 # Check status
-curl http://localhost:5000/api/status/xxx
+curl http://localhost:5001/api/status/xxx
 # Returns: status, progress, etc.
 
 # Get file history
-curl http://localhost:5000/api/files
+curl http://localhost:5001/api/files
 # Returns: array of files
 
 # Download result
-curl -O http://localhost:5000/api/download/output.mp4
+curl -O http://localhost:5001/api/download/output.mp4
 ```
 
 ## Configuration
 
 **Backend** (.env):
 ```bash
-FLASK_PORT=5000
+PORT=5001
 ENCODING_WIDTH=1920
 ENCODING_HEIGHT=1080
 ENCODING_FPS=30
@@ -161,71 +163,27 @@ ENCODING_FPS=30
 
 **Frontend** (.env.local):
 ```bash
-NEXT_PUBLIC_API_URL=http://localhost:5000/api
+NEXT_PUBLIC_API_URL=http://localhost:5001/api
 ```
 
 ## Development Tips
 
 ### Hot Reload
-- Backend: Restart Flask (edit `app.py`)
+- Backend: Rebuild and restart (edit `main.go`)
 - Frontend: Automatic (edit `app/page.tsx`)
 
 ### Debug Mode
-```bash
-# Backend
-FLASK_DEBUG=1 make backend-run
-
-# Frontend (already in dev mode)
-make frontend-dev
-```
-
-### Build for Production
-```bash
-cd frontend
-npm run build
-npm run start
-```
-
-## What to Explore
-
-### Encoding Settings
-- Resolution: 1280x720 to 3840x2160
-- FPS: 24 to 60
-- Chunk Size: 1KB to 10MB (smaller = more frames)
-
-### File Types
-- Encoding: Any file type (PDF, images, documents, etc.)
-- Decoding: MP4 videos only
-
-### File Limits
-- Maximum size: 5GB per file
-- Larger files = longer processing time
-
-## Performance
-
-| File | Encode | Decode |
-|------|--------|--------|
-| 1MB | ~100ms | ~80ms |
-| 10MB | ~600ms | ~500ms |
-| 100MB | ~6s | ~5s |
-| 1GB | ~1-2m | ~1-2m |
+- Go backend provides detailed logs in the terminal.
+- Frontend uses standard Next.js dev server.
 
 ## Next Steps
 
 1. ✅ Get it running (follow above)
 2. ✅ Test with small file (< 10MB)
 3. ✅ Explore the UI
-4. ✅ Read [README_NEW.md](README_NEW.md) for full docs
-5. ✅ Check [SETUP_GUIDE.md](SETUP_GUIDE.md) for details
-6. 🚀 Deploy with Docker or to cloud!
-
-## Help & Support
-
-- **Setup Issues**: [SETUP_GUIDE.md](SETUP_GUIDE.md)
-- **Full Docs**: [README_NEW.md](README_NEW.md)
-- **Architecture**: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- **Deployment**: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
-- **Issues**: GitHub Issues page
+4. ✅ Read [README.md](README.md) for full docs
+5. ✅ Check [ARCHITECTURE.md](ARCHITECTURE.md) for details
+6. 🚀 Deploy with Docker!
 
 ---
 
