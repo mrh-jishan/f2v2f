@@ -1,8 +1,54 @@
 # Rust
 /target/
+lib/target/
 Cargo.lock
-**/*.rs.bk
-*.pdb
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+# lib/  <-- REMOVED because it conflicts with our Rust crate
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.venv/
+venv/
+ENV/
+env/
+
+# Backend
+backend/uploads/
+backend/outputs/
+backend/f2v2f.db
+backend/ffmpeg_error.log
+backend/*.mp4
+backend/*.mov
+backend/*.mkv
+backend/*.webm
+
+# Next.js / Node
+node_modules/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
 
 # IDE
 .idea/
@@ -10,15 +56,13 @@ Cargo.lock
 *.swp
 *.swo
 *~
-.DS_Store
 
 # OS
-Thumbs.db
 .DS_Store
+Thumbs.db
 
-# Generated files
-*.mp4
-*.mov
-*.mkv
-*.webm
+# Project generated
 output/
+outputs/
+uploads/
+*.log
